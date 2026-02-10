@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+torch
+transformers
+accelerate
+soundfile
+numpy
+python-multipart
+requests

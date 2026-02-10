@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+venv/
+.input/
+env/
+.env
+
+# Large Files & Models
+checkpoints/
+models/
+*.pth
+*.pt
+*.bin
+*.SafeTensors
+*.ckpt
+*.safetensors
+*.onnx
+
+# Data & Logs
+logs/
+*.log
+tmp/
+temp/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
