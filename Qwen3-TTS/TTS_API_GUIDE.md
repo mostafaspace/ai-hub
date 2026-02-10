@@ -83,6 +83,20 @@ Returns server status and active device.
   "status": "running",
   "device": "cuda"
 }
+
+---
+
+### 5. List Models - `GET /v1/models`
+
+Returns a list of available models.
+
+### 6. List Voices - `GET /v1/audio/voices`
+
+Returns a list of available voices and speakers.
+
+### 7. TTS Alias - `POST /v1/audio/tts`
+
+Alias for `POST /v1/audio/speech` to support clients expecting this standard endpoint.
 ```
 
 ---

@@ -108,7 +108,18 @@ Use the `file` URL from the task result to download the generated audio.
 
 ---
 
+---
+
 ### 6. Health Check - `GET /health`
+
+---
+
+## Model Status & Performance
+
+The server uses **lazy loading** and an **idle timeout** to optimize resources.
+- **First Request**: The model loads on the first request, which may take **10-15 seconds**.
+- **Idle Timeout**: Models unload after **10 minutes** of inactivity to free VRAM.
+- **Subsequent Requests**: Response time is instant if the model is active.
 
 ---
 
