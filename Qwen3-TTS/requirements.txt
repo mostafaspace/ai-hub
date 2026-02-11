@@ -7,3 +7,5 @@ soundfile
 numpy
 python-multipart
 requests
+pydub
+imageio-ffmpeg

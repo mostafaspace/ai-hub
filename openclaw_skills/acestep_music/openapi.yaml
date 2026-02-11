@@ -1,0 +1,127 @@
+openapi: 3.0.0
+info:
+  title: ACE-Step Music API
+  description: API for generating music using the ACE-Step model via local server.
+  version: 1.5.0
+servers:
+  - url: http://192.168.1.26:8001
+    description: Local ACE-Step Music Server
+
+paths:
+  /release_task:
+    post:
+      summary: Generate Music
+      description: Create a task to generate music.
+      operationId: generateMusic
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt:
+                  type: string
+                  description: Description of the music to generate.
+                lyrics:
+                  type: string
+                  description: Lyrics for the song (use [Verse], [Chorus] tags).
+                audio_duration:
+                  type: number
+                  description: Duration in seconds (10-600).
+                  default: 30
+                thinking:
+                  type: boolean
+                  description: Enable LM reasoning for better quality.
+                  default: true
+                batch_size:
+                  type: integer
+                  description: Number of variations to generate (1-8).
+                  default: 1
+                bpm:
+                  type: number
+                  description: Beats per minute.
+                key_scale:
+                  type: string
+                  description: Key signature (e.g., "C Major", "Am").
+                time_signature:
+                  type: string
+                  description: Time signature (e.g., "4" for 4/4).
+                sample_query:
+                  type: string
+                  description: Natural language query for full auto-generation (Sample Mode).
+      responses:
+        '200':
+          description: Task created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      task_id:
+                        type: string
+                        description: The ID of the created task. Used for polling.
+                      status:
+                        type: string
+                  code:
+                    type: integer
+
+  /query_result:
+    post:
+      summary: Check Task Status
+      description: Poll the status of a generation task.
+      operationId: checkStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                task_id_list:
+                  type: array
+                  items:
+                    type: string
+                  description: List of task IDs to check.
+      responses:
+        '200':
+          description: Task status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        task_id:
+                          type: string
+                        status:
+                          type: integer
+                          description: 0=Processing, 1=Success, 2=Failed.
+                        result:
+                          type: string
+                          description: JSON string containing list of generated files (if success).
+                  code:
+                    type: integer
+
+  /health:
+    get:
+      summary: Health Check
+      description: Check if the server is running.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string

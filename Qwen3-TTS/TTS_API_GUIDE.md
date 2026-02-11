@@ -36,7 +36,7 @@ Generates high-quality speech using preset speakers.
 | `input` | string | **Required** | The text to convert to speech |
 | `voice` | string | `"Vivian"` | Speaker name (e.g., `"Vivian"`, `"Ryan"`, `"Chelsie"`) |
 | `language` | string | `"Auto"` | Content language (e.g., `"en"`, `"zh"`, `"ja"`) |
-| `response_format` | string | `"mp3"` | Output format: `"wav"`, `"mp3"`, `"pcm"` |
+| `response_format` | string | `"mp3"` | Output format: `"wav"`, `"mp3"`, `"pcm"`, `"ogg"` |
 
 ---
 
@@ -106,4 +106,5 @@ Alias for `POST /v1/audio/speech` to support clients expecting this standard end
 1. **Voice Selection**: `"Vivian"` is the most reliable default for English.
 2. **Batching**: For long texts, split by sentences to avoid timeouts and high VRAM usage.
 3. **Format**: Use `"mp3"` for smaller file sizes, or `"wav"` for lossless quality.
-4. **VRAM Management**: High-tier GPUs (RTX 3090/4090/5090) perform best with these models.
+4. **WhatsApp**: Use `"ogg"` for direct compatibility with WhatsApp voice notes.
+5. **VRAM Management**: High-tier GPUs (RTX 3090/4090/5090) perform best with these models.

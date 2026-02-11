@@ -1,4 +1,23 @@
 import os
+
+# --- FFmpeg Configuration (for MP3/OGG) ---
+# MUST be done before importing any packages that might trigger pydub (like qwen_tts or others)
+try:
+    import imageio_ffmpeg
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+    os.environ["PATH"] += os.pathsep + os.path.dirname(ffmpeg_path)
+    
+    import warnings
+    # Suppress the pydub warning about missing ffmpeg, as we are setting it manually right after
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        from pydub import AudioSegment
+    
+    AudioSegment.converter = ffmpeg_path # Explicitly set converter path
+    HAS_FFMPEG = True
+except ImportError:
+    HAS_FFMPEG = False
+
 import io
 import time
 import torch
@@ -13,24 +32,15 @@ from contextlib import asynccontextmanager
 
 # Import Qwen3TTS
 # Ensure 'qwen-tts' is installed
+# (FFmpeg config moved to top)
+
+# Import Qwen3TTS
+# Ensure 'qwen-tts' is installed
 try:
     from qwen_tts import Qwen3TTSModel
 except ImportError:
     print("Error: qwen-tts package not found. Please install it via 'pip install -e .' in the Qwen3-TTS repo.")
     exit(1)
-
-# --- FFmpeg Configuration (for MP3) ---
-try:
-    import imageio_ffmpeg
-    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-    os.environ["PATH"] += os.pathsep + os.path.dirname(ffmpeg_path)
-    print(f"FFmpeg found: {ffmpeg_path}")
-    from pydub import AudioSegment
-    AudioSegment.converter = ffmpeg_path # Explicitly set converter path
-    HAS_FFMPEG = True
-except ImportError:
-    print("Warning: imageio-ffmpeg or pydub not found. MP3 support might fail.")
-    HAS_FFMPEG = False
 
 # --- Configuration ---
 HOST = "0.0.0.0"
@@ -47,12 +57,13 @@ import threading
 # Global model cache to manage VRAM
 # Simple LRU-style: keep only one active model to be safe on VRAM
 class ModelManager:
-    def __init__(self, idle_timeout: float = 600.0): # 10 minutes default
+    def __init__(self, idle_timeout: float = 600.0, check_interval: float = 30.0): # 10 minutes default
         self.models = {}
         self.current_model_type = None
         self.last_active = time.time()
         self.idle_timeout = idle_timeout
-        self.lock = threading.Lock()
+        self.check_interval = check_interval
+        self.lock = threading.RLock()
         
         # Start background monitor
         self.monitor_thread = threading.Thread(target=self._idle_monitor, daemon=True)
@@ -61,7 +72,7 @@ class ModelManager:
     def _idle_monitor(self):
         """Background thread to unload models after idle timeout."""
         while True:
-            time.sleep(30) # Check every 30 seconds
+            time.sleep(self.check_interval) # Check every check_interval seconds
             with self.lock:
                 if self.current_model_type and (time.time() - self.last_active > self.idle_timeout):
                     print(f"Idle timeout reached ({self.idle_timeout}s). Unloading {self.current_model_type} model...")
@@ -126,13 +137,13 @@ class TTSSpeechRequest(BaseModel):
     voice: str = "Vivian" # Default Qwen speaker
     language: Optional[str] = "Auto"
     instruct: Optional[str] = None
-    response_format: Literal["wav", "mp3", "pcm"] = "mp3"
+    response_format: Literal["wav", "mp3", "pcm", "ogg"] = "mp3"
 
 class VoiceDesignRequest(BaseModel):
     input: str
     instruct: str
     language: Optional[str] = "Auto"
-    response_format: Literal["wav", "mp3", "pcm"] = "mp3"
+    response_format: Literal["wav", "mp3", "pcm", "ogg"] = "mp3"
 
 # --- Helper ---
 def audio_to_stream(audio_data, sample_rate, fmt):
@@ -157,6 +168,27 @@ def audio_to_stream(audio_data, sample_rate, fmt):
             return StreamingResponse(buffer, media_type="audio/mpeg")
         except Exception as e:
             print(f"MP3 Conversion Failed: {e}. Falling back to WAV.")
+
+    # OGG (Opus) Support for WhatsApp
+    if fmt == "ogg" and HAS_FFMPEG:
+        try:
+            # Convert float32 numpy array to int16 PCM for pydub
+            audio_int16 = (audio_data * 32767).astype(np.int16)
+            
+            seg = AudioSegment(
+                audio_int16.tobytes(), 
+                frame_rate=sample_rate,
+                sample_width=2, 
+                channels=1
+            )
+            
+            buffer = io.BytesIO()
+            # WhatsApp prefers basic OGG/Opus
+            seg.export(buffer, format="ogg", codec="libopus", bitrate="24k") 
+            buffer.seek(0)
+            return StreamingResponse(buffer, media_type="audio/ogg")
+        except Exception as e:
+            print(f"OGG Conversion Failed: {e}. Falling back to WAV.")
     
     # Fallback / WAV handling
     buffer = io.BytesIO()

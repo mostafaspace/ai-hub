@@ -1,0 +1,174 @@
+openapi: 3.0.0
+info:
+  title: Qwen3 TTS API
+  description: API for generating speech using the Qwen3 TTS model via local server.
+  version: 1.0.0
+servers:
+  - url: http://192.168.1.26:8000
+    description: Local Qwen3 TTS Server
+
+paths:
+  /v1/audio/speech:
+    post:
+      summary: Generate speech (Standard TTS)
+      description: Generate speech from text using a preset voice.
+      operationId: generateSpeech
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                input:
+                  type: string
+                  description: The text to generate speech from.
+                voice:
+                  type: string
+                  description: The ID of the voice to use (e.g., "Vivian").
+                  default: "Vivian"
+                language:
+                  type: string
+                  description: The language code (e.g., "en", "zh", "Auto").
+                  default: "Auto"
+                instruct:
+                  type: string
+                  description: Optional system instruction for the model (e.g., "Speak slowly").
+                response_format:
+                  type: string
+                  enum: [mp3, wav, pcm, ogg]
+                  default: mp3
+              required:
+                - input
+      responses:
+        '200':
+          description: Audio file stream
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            audio/ogg:
+              schema:
+                type: string
+                format: binary
+  
+  /v1/audio/voice_design:
+    post:
+      summary: Voice Design (Text-to-Voice)
+      description: Generate speech using a new voice created from a text description.
+      operationId: voiceDesign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                input:
+                  type: string
+                  description: The text to generate speech from.
+                instruct:
+                  type: string
+                  description: A description of the desired voice (e.g., "A deep, robotic male voice").
+                language:
+                  type: string
+                  default: "Auto"
+                response_format:
+                  type: string
+                  enum: [mp3, wav, pcm]
+                  default: mp3
+              required:
+                - input
+                - instruct
+      responses:
+        '200':
+          description: Audio file stream
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+
+  /v1/audio/voice_clone:
+    post:
+      summary: Voice Cloning (Audio-to-Voice)
+      description: Clone a voice from a reference audio file.
+      operationId: voiceClone
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                  description: The text to generate speech from.
+                ref_text:
+                  type: string
+                  description: The text spoken in the reference audio (improves quality).
+                ref_audio:
+                  type: string
+                  format: binary
+                  description: The reference audio file (WAV/MP3).
+                language:
+                  type: string
+                  default: "Auto"
+                response_format:
+                  type: string
+                  enum: [mp3, wav, pcm]
+                  default: mp3
+              required:
+                - text
+                - ref_audio
+      responses:
+        '200':
+          description: Audio file stream
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+
+  /v1/audio/voices:
+    get:
+      summary: List Voices
+      description: List available preset voices.
+      operationId: listVoices
+      responses:
+        '200':
+          description: List of available voices
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  voices:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        voice_id:
+                          type: string
+                        name:
+                          type: string
+                        category:
+                          type: string
+
+  /health:
+    get:
+      summary: Health Check
+      description: Check if the server is running.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "running"
