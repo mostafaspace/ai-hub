@@ -1,6 +1,6 @@
 # AI-Hub 🚀
 
-Welcome to **AI-Hub**, the unified gateway for Antigravity AI's suite of powerful generative models and services. This repository serves as a central orchestrator, providing a single point of entry to state-of-the-art Text-to-Speech (TTS) and Music Generation capabilities.
+Welcome to **AI-Hub**, the unified gateway for open source AI's suite of powerful generative models and services. This repository serves as a central orchestrator, providing a single point of entry to state-of-the-art Text-to-Speech (TTS) and Music Generation capabilities.
 
 ## 🌟 Overview
 
@@ -60,7 +60,7 @@ python test_all_servers.py
 
 ## 📅 Roadmap & Future Integrations
 
-AI-Hub is a living project with significant expansions planned. We are committed to making this the ultimate hub for Antigravity AI services. 🛸
+AI-Hub is a living project with significant expansions planned. We are committed to making this the ultimate hub for open source AI services. 🛸
 
 | Feature | Description | Status |
 | :--- | :--- | :--- |
@@ -84,8 +84,8 @@ ai-hub/
 
 ## 🤝 Contributing
 
-We're looking forward to growing the AI-Hub ecosystem! Feel free to open issues or submit pull requests as we continue to build the future of Antigravity AI.
+We're looking forward to growing the AI-Hub ecosystem! Feel free to open issues or submit pull requests as we continue to build the future of open source AI.
 
 ---
 
-*Made with ❤️ by the Antigravity AI Team.*
+*Made with ❤️ by the AI-Hub Team.*
