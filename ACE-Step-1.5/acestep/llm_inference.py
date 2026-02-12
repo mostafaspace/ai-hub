@@ -26,6 +26,17 @@ from acestep.constants import DEFAULT_LM_INSTRUCTION, DEFAULT_LM_UNDERSTAND_INST
 from acestep.gpu_config import get_lm_gpu_memory_ratio, get_gpu_memory_gb, get_lm_model_size, get_global_gpu_config
 
 
+def _resolve_preferred_cuda_device() -> str:
+    """Prefer cuda:1 when present, otherwise fallback to cuda:0."""
+    gpu_count = torch.cuda.device_count()
+    target_idx = 1 if gpu_count > 1 else 0
+    return f"cuda:{target_idx}"
+
+
+def _device_type(device: str) -> str:
+    return device.split(":", 1)[0] if isinstance(device, str) else str(device)
+
+
 def _warn_if_prerelease_python():
     v = sys.version_info
     if getattr(v, "releaselevel", "final") != "final" and sys.platform.startswith("linux"):
@@ -113,7 +124,8 @@ class LLMHandler:
             Tuple of (gpu_memory_utilization_ratio, low_gpu_memory_mode)
         """
         try:
-            device = torch.device("cuda:0")
+            target_cuda = self.device if isinstance(self.device, str) and self.device.startswith("cuda:") else _resolve_preferred_cuda_device()
+            device = torch.device(target_cuda)
             total_gpu_mem_bytes = torch.cuda.get_device_properties(device).total_memory
             total_gpu = total_gpu_mem_bytes / 1024**3
             
@@ -180,6 +192,24 @@ class LLMHandler:
         
         if not use_constrained_decoding and not use_phase_temperatures:
             return None
+            
+        if self.llm_tokenizer is None:
+            # If we don't have a tokenizer, we can't use the constrained processor
+            if constrained_decoding_debug:
+                logger.warning("Tokenizer is None in _setup_constrained_processor. Disabling constrained decoding.")
+            return None
+            
+        # Ensure processor has the latest tokenizer (in case it was re-initialized)
+        if self.constrained_processor is not None:
+            self.constrained_processor.tokenizer = self.llm_tokenizer
+        else:
+            # This shouldn't happen based on __init__, but for safety:
+            from acestep.constrained_logits_processor import MetadataConstrainedLogitsProcessor
+            self.constrained_processor = MetadataConstrainedLogitsProcessor(
+                tokenizer=self.llm_tokenizer,
+                enabled=True,
+                debug=constrained_decoding_debug
+            )
         
         # Reset processor state for new generation
         self.constrained_processor.reset()
@@ -362,9 +392,9 @@ class LLMHandler:
             (status_message, success)
         """
         try:
-            if device == "auto":
+            if device in {"auto", "cuda"}:
                 if torch.cuda.is_available():
-                    device = "cuda"
+                    device = _resolve_preferred_cuda_device()
                 elif hasattr(torch, 'xpu') and torch.xpu.is_available():
                     device = "xpu"
                 elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
@@ -373,6 +403,13 @@ class LLMHandler:
                     device = "cpu"
 
             self.device = device
+            if isinstance(device, str) and device.startswith("cuda:") and torch.cuda.is_available():
+                try:
+                    torch.cuda.set_device(int(device.split(":", 1)[1]))
+                except Exception:
+                    logger.warning(f"[initialize] Failed to set CUDA device to {device}, falling back to cuda:0")
+                    torch.cuda.set_device(0)
+                    self.device = "cuda:0"
             self.offload_to_cpu = offload_to_cpu
             
             # Set dtype based on device: bfloat16 for cuda/xpu, float32 for mps/cpu
@@ -381,7 +418,7 @@ class LLMHandler:
             # produce NaN/inf when naively converted to float16 (different exponent range).
             # The DiT and VAE use float16 on MPS where it actually helps throughput.
             if dtype is None:
-                if device in ["cuda", "xpu"]:
+                if _device_type(self.device) in ["cuda", "xpu"]:
                     self.dtype = torch.bfloat16
                 else:
                     self.dtype = torch.float32
@@ -783,6 +820,9 @@ class LLMHandler:
         if not generated_ids.is_cpu:
             generated_ids = generated_ids.cpu()
         
+        if self.llm_tokenizer is None:
+            raise RuntimeError("LLM tokenizer is None. This could be due to a race condition during model unloading.")
+            
         output_text = self.llm_tokenizer.decode(generated_ids, skip_special_tokens=False)
         return output_text
 

@@ -49,6 +49,17 @@ from acestep.gpu_config import get_gpu_memory_gb
 warnings.filterwarnings("ignore")
 
 
+def _resolve_preferred_cuda_device() -> str:
+    """Prefer cuda:1 when present, otherwise fallback to cuda:0."""
+    gpu_count = torch.cuda.device_count()
+    target_idx = 1 if gpu_count > 1 else 0
+    return f"cuda:{target_idx}"
+
+
+def _device_type(device: str) -> str:
+    return device.split(":", 1)[0] if isinstance(device, str) else str(device)
+
+
 class AceStepHandler:
     """ACE-Step Business Logic Handler"""
     
@@ -347,11 +358,11 @@ class AceStepHandler:
             (status_message, enable_generate_button)
         """
         try:
-            if device == "auto":
+            if device in {"auto", "cuda"}:
                 if hasattr(torch, 'xpu') and torch.xpu.is_available():
                     device = "xpu"
                 elif torch.cuda.is_available():
-                    device = "cuda"
+                    device = _resolve_preferred_cuda_device()
                 elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                     device = "mps"
                 else:
@@ -360,12 +371,19 @@ class AceStepHandler:
             status_msg = ""
             
             self.device = device
+            if isinstance(device, str) and device.startswith("cuda:") and torch.cuda.is_available():
+                try:
+                    torch.cuda.set_device(int(device.split(":", 1)[1]))
+                except Exception:
+                    logger.warning(f"[initialize_service] Failed to set CUDA device to {device}, falling back to cuda:0")
+                    torch.cuda.set_device(0)
+                    self.device = "cuda:0"
             self.offload_to_cpu = offload_to_cpu
             self.offload_dit_to_cpu = offload_dit_to_cpu
             self.compiled = compile_model
             # Set dtype based on device: bfloat16 for cuda/xpu/mps, float32 for cpu
             # Models are trained in bfloat16; MPS supports bfloat16 natively since PyTorch 2.3+
-            if device in ["cuda", "xpu", "mps"]:
+            if _device_type(self.device) in ["cuda", "xpu", "mps"]:
                 self.dtype = torch.bfloat16
             else:
                 self.dtype = torch.float32

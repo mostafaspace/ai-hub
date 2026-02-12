@@ -78,6 +78,16 @@ Clones a voice from a reference audio file.
 
 Returns a list of available preset voices.
 
+### 5. List Custom Speakers
+**GET** `/v1/audio/speakers`
+
+Returns a list of custom speaker names created through voice design or cloning.
+
+### 6. List Models
+**GET** `/v1/models`
+
+Returns standard OpenAI-compatible model metadata.
+
 ## Example Workflow (Agent)
 
 To generate speech with a custom designed voice:

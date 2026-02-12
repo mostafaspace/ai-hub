@@ -916,59 +916,66 @@ async def _ensure_initialized(app: FastAPI, model_idx: int = 1) -> None:
     
     # Check if requested model is initialized
     init_flag = "_initialized"
-    if model_idx == 2: init_flag = "_initialized2"
-    elif model_idx == 3: init_flag = "_initialized3"
+    lock_attr = "_init_lock"
+    if model_idx == 2:
+        init_flag = "_initialized2"
+        lock_attr = "_init_lock2"
+    elif model_idx == 3:
+        init_flag = "_initialized3"
+        lock_attr = "_init_lock3"
     
-    if not getattr(app.state, init_flag, False):
-        # Need to initialize
-        print(f"[API Server] Lazily initializing model {model_idx}...")
-        
-        # Setup parameters
-        config_key = "_config_path"
-        handler_key = "handler"
-        if model_idx == 2:
-            config_key = "_config_path2"
-            handler_key = "handler2"
-        elif model_idx == 3:
-            config_key = "_config_path3"
-            handler_key = "handler3"
-        
-        config_path = getattr(app.state, config_key, None)
-        h = getattr(app.state, handler_key, None)
-        
-        if not config_path or not h:
-            raise RuntimeError(f"Handler {model_idx} not configured")
+    lock = getattr(app.state, lock_attr)
+    async with lock:
+        if not getattr(app.state, init_flag, False):
+            # Need to initialize
+            print(f"[API Server] Lazily initializing model {model_idx}...")
+            
+            # Setup parameters
+            config_key = "_config_path"
+            handler_key = "handler"
+            if model_idx == 2:
+                config_key = "_config_path2"
+                handler_key = "handler2"
+            elif model_idx == 3:
+                config_key = "_config_path3"
+                handler_key = "handler3"
+            
+            config_path = getattr(app.state, config_key, None)
+            h = getattr(app.state, handler_key, None)
+            
+            if not config_path or not h:
+                raise RuntimeError(f"Handler {model_idx} not configured")
 
-        checkpoint_dir = os.path.join(app.state.project_root, "checkpoints")
-        
-        # Download model if needed
-        dit_model_name = _get_model_name(config_path)
-        if dit_model_name:
-            try:
-                _ensure_model_downloaded(dit_model_name, checkpoint_dir)
-            except Exception as e:
-                print(f"[API Server] Warning: Failed to download DiT model {dit_model_name}: {e}")
-        _ensure_model_downloaded("vae", checkpoint_dir)
-        
-        # Initialize
-        status_msg, ok = h.initialize_service(
-            project_root=app.state.project_root,
-            config_path=config_path,
-            device=app.state.init_params["device"],
-            use_flash_attention=app.state.init_params["use_flash_attention"],
-            compile_model=False,
-            offload_to_cpu=app.state.init_params["offload_to_cpu"],
-            offload_dit_to_cpu=app.state.init_params["offload_dit_to_cpu"],
-        )
-        if not ok:
-            raise RuntimeError(f"Failed to initialize model {model_idx}: {status_msg}")
-        
-        setattr(app.state, init_flag, True)
-        app.state.last_used[handler_key] = time.time()
+            checkpoint_dir = os.path.join(app.state.project_root, "checkpoints")
+            
+            # Download model if needed
+            dit_model_name = _get_model_name(config_path)
+            if dit_model_name:
+                try:
+                    _ensure_model_downloaded(dit_model_name, checkpoint_dir)
+                except Exception as e:
+                    print(f"[API Server] Warning: Failed to download DiT model {dit_model_name}: {e}")
+            _ensure_model_downloaded("vae", checkpoint_dir)
+            
+            # Initialize
+            status_msg, ok = h.initialize_service(
+                project_root=app.state.project_root,
+                config_path=config_path,
+                device=app.state.init_params["device"],
+                use_flash_attention=app.state.init_params["use_flash_attention"],
+                compile_model=False,
+                offload_to_cpu=app.state.init_params["offload_to_cpu"],
+                offload_dit_to_cpu=app.state.init_params["offload_dit_to_cpu"],
+            )
+            if not ok:
+                raise RuntimeError(f"Failed to initialize model {model_idx}: {status_msg}")
+            
+            setattr(app.state, init_flag, True)
+            app.state.last_used[handler_key] = time.time()
 
 async def _ensure_llm_ready(app: FastAPI, lm_model_path_override: Optional[str] = None, backend_override: Optional[str] = None) -> None:
     """Ensure LLM handler is initialized when needed. Shared by all endpoints."""
-    with app.state._llm_init_lock:
+    async with app.state._llm_init_lock:
         initialized = getattr(app.state, "_llm_initialized", False)
         # If already initialized, just update timestamp and return
         if initialized:
@@ -1083,7 +1090,7 @@ def create_app() -> FastAPI:
         app.state.llm_handler = llm_handler
         app.state._llm_initialized = False
         app.state._llm_init_error = None
-        app.state._llm_init_lock = Lock()
+        app.state._llm_init_lock = asyncio.Lock()
         app.state._llm_lazy_load_disabled = False  # Will be set to True if LLM skipped due to GPU config
 
         # Multi-model support: secondary DiT handlers
@@ -1101,6 +1108,8 @@ def create_app() -> FastAPI:
         app.state.handler3 = handler3
         app.state._initialized2 = False
         app.state._initialized3 = False
+        app.state._init_lock2 = asyncio.Lock()
+        app.state._init_lock3 = asyncio.Lock()
         app.state._config_path = os.getenv("ACESTEP_CONFIG_PATH", "acestep-v15-turbo")
         app.state._config_path2 = config_path2
         app.state._config_path3 = config_path3
@@ -1148,27 +1157,63 @@ def create_app() -> FastAPI:
                 
                 # Check primary handler
                 if app.state._initialized and (now - app.state.last_used["handler"] > app.state.idle_timeout):
-                    print(f"[API Server] Primary handler idle for {now - app.state.last_used['handler']:.1f}s. Unloading...")
-                    app.state.handler.unload()
-                    app.state._initialized = False
+                    # Try to acquire lock to ensure no concurrent initialization
+                    if app.state._init_lock.locked():
+                        continue # Skip this cycle if busy
+                        
+                    async with app.state._init_lock:
+                        # Double check state inside lock
+                        if app.state._initialized and (now - app.state.last_used["handler"] > app.state.idle_timeout):
+                            print(f"[API Server] Primary handler idle for {now - app.state.last_used['handler']:.1f}s. Unloading...")
+                            # Set state to False BEFORE unloading to prevent requests from using partially unloaded handler
+                            app.state._initialized = False
+                            try:
+                                app.state.handler.unload()
+                            except Exception as e:
+                                print(f"[API Server] Error unloading primary handler: {e}")
                 
                 # Check secondary handler
-                if app.state._initialized2 and (now - app.state.last_used["handler2"] > app.state.idle_timeout):
-                    print(f"[API Server] Secondary handler idle for {now - app.state.last_used['handler2']:.1f}s. Unloading...")
-                    app.state.handler2.unload()
-                    app.state._initialized2 = False
+                if app.state._initialized2 and app.state.handler2 and (now - app.state.last_used["handler2"] > app.state.idle_timeout):
+                    if app.state._init_lock2.locked():
+                        continue
+                        
+                    async with app.state._init_lock2:
+                        if app.state._initialized2 and (now - app.state.last_used["handler2"] > app.state.idle_timeout):
+                            print(f"[API Server] Secondary handler idle for {now - app.state.last_used['handler2']:.1f}s. Unloading...")
+                            app.state._initialized2 = False
+                            try:
+                                app.state.handler2.unload()
+                            except Exception as e:
+                                print(f"[API Server] Error unloading secondary handler: {e}")
                 
                 # Check third handler
-                if app.state._initialized3 and (now - app.state.last_used["handler3"] > app.state.idle_timeout):
-                    print(f"[API Server] Third handler idle for {now - app.state.last_used['handler3']:.1f}s. Unloading...")
-                    app.state.handler3.unload()
-                    app.state._initialized3 = False
+                if app.state._initialized3 and app.state.handler3 and (now - app.state.last_used["handler3"] > app.state.idle_timeout):
+                    if app.state._init_lock3.locked():
+                        continue
+                        
+                    async with app.state._init_lock3:
+                        if app.state._initialized3 and (now - app.state.last_used["handler3"] > app.state.idle_timeout):
+                            print(f"[API Server] Third handler idle for {now - app.state.last_used['handler3']:.1f}s. Unloading...")
+                            app.state._initialized3 = False
+                            try:
+                                app.state.handler3.unload()
+                            except Exception as e:
+                                print(f"[API Server] Error unloading third handler: {e}")
 
                 # Check LLM handler
                 if app.state._llm_initialized and (now - app.state.last_used["llm_handler"] > app.state.idle_timeout):
-                    print(f"[API Server] LLM handler idle for {now - app.state.last_used['llm_handler']:.1f}s. Unloading...")
-                    app.state.llm_handler.unload()
-                    app.state._llm_initialized = False
+                    if app.state._llm_init_lock.locked():
+                        continue
+                        
+                    async with app.state._llm_init_lock:
+                        if app.state._llm_initialized and (now - app.state.last_used["llm_handler"] > app.state.idle_timeout):
+                            print(f"[API Server] LLM handler idle for {now - app.state.last_used['llm_handler']:.1f}s. Unloading...")
+                            # Set state to False BEFORE unloading!
+                            app.state._llm_initialized = False
+                            try:
+                                app.state.llm_handler.unload()
+                            except Exception as e:
+                                print(f"[API Server] Error unloading LLM handler: {e}")
 
         # Initialize local cache
         try:
@@ -1318,14 +1363,27 @@ def create_app() -> FastAPI:
             handler_names = {1: "handler", 2: "handler2", 3: "handler3"}
             app.state.last_used[handler_names[selected_handler_idx]] = time.time()
             
-            # Select proper handler
-            if selected_handler_idx == 1: h = app.state.handler
-            elif selected_handler_idx == 2: h = app.state.handler2
-            else: h = app.state.handler3
+            # Select proper handler and matching lock
+            if selected_handler_idx == 1: 
+                h = app.state.handler
+                h_lock = app.state._init_lock
+                h_key = "handler"
+            elif selected_handler_idx == 2: 
+                h = app.state.handler2
+                h_lock = app.state._init_lock2
+                h_key = "handler2"
+            else: 
+                h = app.state.handler3
+                h_lock = app.state._init_lock3
+                h_key = "handler3"
 
             # Pre-initialize LLM if needed (since _blocking_generate is synchronous)
             require_llm_req = bool(req.thinking or req.sample_mode or (req.sample_query and req.sample_query.strip()) or req.use_format or req.full_analysis_only)
             want_llm_req = bool(req.use_cot_caption or req.use_cot_language)
+            
+            # This flag needs to be accessible in both _blocking_generate and outer scope
+            status_flags = {"llm_available": False}
+            
             if require_llm_req or want_llm_req:
                 try:
                     await _ensure_llm_ready(app, lm_model_path_override=req.lm_model_path, backend_override=req.lm_backend)
@@ -1381,8 +1439,9 @@ def create_app() -> FastAPI:
                 want_llm = use_cot_caption or use_cot_language
 
                 # Check if LLM is available (already attempted init in _run_one_job)
-                llm_available = getattr(app.state, "_llm_initialized", False)
-
+                status_flags["llm_available"] = getattr(app.state, "_llm_initialized", False)
+                llm_available = status_flags["llm_available"]
+                
                 # Fail if LLM is required but unavailable
                 if require_llm and not llm_available:
                     raise RuntimeError(f"5Hz LM init failed: {app.state._llm_init_error}")
@@ -1730,10 +1789,28 @@ def create_app() -> FastAPI:
             t0 = time.time()
             try:
                 loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(executor, _blocking_generate)
-                job_store.mark_succeeded(job_id, result)
+                
+                # HOLD LOCKS during the entire generation process to prevent idle monitor from unloading
+                # Use AsyncExitStack to handle multiple optional locks cleanly
+                from contextlib import AsyncExitStack
+                async with AsyncExitStack() as stack:
+                    # Always lock the selected model handler
+                    await stack.enter_async_context(h_lock)
+                    
+                    # Also lock LLM handler if we are using it
+                    if status_flags["llm_available"]:
+                        await stack.enter_async_context(app.state._llm_init_lock)
+                    
+                    # Perform the blocking generation
+                    result = await loop.run_in_executor(executor, _blocking_generate)
+                
+                # Update last_used timestamps AGAIN after generation completes to reset idle timer
+                now = time.time()
+                app.state.last_used[h_key] = now
+                if status_flags["llm_available"]:
+                    app.state.last_used["llm_handler"] = now
 
-                # Update local cache
+                job_store.mark_succeeded(job_id, result)
                 _update_local_cache(job_id, result, "succeeded")
             except Exception as e:
                 error_traceback = traceback.format_exc()

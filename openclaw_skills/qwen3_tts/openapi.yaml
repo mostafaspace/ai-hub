@@ -76,7 +76,7 @@ paths:
                   default: "Auto"
                 response_format:
                   type: string
-                  enum: [mp3, wav, pcm]
+                  enum: [mp3, wav, pcm, ogg]
                   default: mp3
               required:
                 - input
@@ -86,6 +86,10 @@ paths:
           description: Audio file stream
           content:
             audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            audio/ogg:
               schema:
                 type: string
                 format: binary
@@ -117,7 +121,7 @@ paths:
                   default: "Auto"
                 response_format:
                   type: string
-                  enum: [mp3, wav, pcm]
+                  enum: [mp3, wav, pcm, ogg]
                   default: mp3
               required:
                 - text
@@ -127,6 +131,10 @@ paths:
           description: Audio file stream
           content:
             audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            audio/ogg:
               schema:
                 type: string
                 format: binary
@@ -154,6 +162,49 @@ paths:
                         name:
                           type: string
                         category:
+                          type: string
+
+  /v1/audio/speakers:
+    get:
+      summary: List Speakers
+      description: List available custom speakers/voice designs.
+      operationId: listSpeakers
+      responses:
+        '200':
+          description: List of speakers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  speakers:
+                    type: array
+                    items:
+                      type: string
+
+  /v1/models:
+    get:
+      summary: List Models
+      description: List available TTS models.
+      operationId: listModels
+      responses:
+        '200':
+          description: List of models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        object:
+                          type: string
+                        owned_by:
                           type: string
 
   /health:

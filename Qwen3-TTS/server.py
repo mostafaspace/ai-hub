@@ -45,7 +45,23 @@ except ImportError:
 # --- Configuration ---
 HOST = "0.0.0.0"
 PORT = 8000
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _resolve_device_map() -> str:
+    """Prefer the second GPU when available, otherwise use the first GPU."""
+    env_device = os.getenv("QWEN_TTS_DEVICE")
+    if env_device:
+        return env_device.strip()
+
+    if torch.cuda.is_available():
+        gpu_count = torch.cuda.device_count()
+        target_idx = 1 if gpu_count > 1 else 0
+        return f"cuda:{target_idx}"
+    return "cpu"
+
+
+DEVICE_MAP = _resolve_device_map()
+DEVICE = "cuda" if DEVICE_MAP.startswith("cuda") else "cpu"
 
 # Model paths (Hugging Face IDs or local paths)
 MODEL_CUSTOM = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
@@ -106,8 +122,8 @@ class ModelManager:
                 elif model_type == "base": path = MODEL_BASE
                 
                 print(f"Loading {model_type} model from {path}...")
-                # FORCE single GPU to avoid multi-device tensor errors (cuda:0 vs cuda:1)
-                device_arg = "cuda:0" if DEVICE == "cuda" else "cpu"
+                # FORCE a single GPU to avoid cross-device tensor errors.
+                device_arg = DEVICE_MAP if DEVICE == "cuda" else "cpu"
                 
                 self.models[model_type] = Qwen3TTSModel.from_pretrained(
                     path,
@@ -214,7 +230,7 @@ def audio_to_stream(audio_data, sample_rate, fmt):
 
 @app.get("/health")
 def health_check():
-    return {"status": "running", "device": DEVICE}
+    return {"status": "running", "device": DEVICE, "device_map": DEVICE_MAP}
 
 @app.get("/v1/models")
 def list_models():

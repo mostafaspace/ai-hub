@@ -119,9 +119,26 @@ GPU_TIER_CONFIGS = {
 }
 
 
+def get_preferred_device_index() -> int:
+    """
+    Get the preferred GPU device index.
+    Returns 1 if multiple GPUs are available (user preference), else 0.
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            device_count = torch.cuda.device_count()
+            if device_count > 1:
+                return 1
+    except Exception:
+        pass
+    return 0
+
+
 def get_gpu_memory_gb() -> float:
     """
-    Get GPU memory in GB. Returns 0 if no GPU is available.
+    Get GPU memory in GB for the preferred device.
+    Returns 0 if no GPU is available.
     
     Debug Mode:
         Set environment variable MAX_CUDA_VRAM to override the detected GPU memory.
@@ -142,10 +159,11 @@ def get_gpu_memory_gb() -> float:
     try:
         import torch
         if torch.cuda.is_available():
-            # Get total memory of the first GPU in GB
-            total_memory = torch.cuda.get_device_properties(0).total_memory
+            device_idx = get_preferred_device_index()
+            # Get total memory of the preferred GPU in GB
+            total_memory = torch.cuda.get_device_properties(device_idx).total_memory
             memory_gb = total_memory / (1024**3)  # Convert bytes to GB
-            device_name = torch.cuda.get_device_name(0)
+            device_name = torch.cuda.get_device_name(device_idx)
             is_rocm = hasattr(torch.version, 'hip') and torch.version.hip is not None
             if is_rocm:
                 logger.info(f"ROCm GPU detected: {device_name} ({memory_gb:.1f} GB, HIP {torch.version.hip})")

@@ -1559,7 +1559,8 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         Returns:
             Modified scores with invalid tokens masked to -inf and temperature scaling applied
         """
-        if not self.enabled:
+        # Final safety check: if tokenizer is missing, we must fail gracefully
+        if not self.enabled or self.tokenizer is None:
             return self._apply_temperature_scaling(scores)
         
         if self.state == FSMState.COMPLETED:
@@ -2126,6 +2127,13 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         if not self.enabled:
             return
         
+        if self.tokenizer is None:
+            # If tokenizer is None, we can't update state properly. 
+            # This can happen if the model was unloaded mid-generation due to idle timeout.
+            if self.debug:
+                logger.warning("Tokenizer is None in update_state. Skipping state update.")
+            return
+
         if self.state == FSMState.COMPLETED:
             return
         
