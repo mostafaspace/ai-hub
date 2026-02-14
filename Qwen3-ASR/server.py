@@ -173,31 +173,36 @@ async def transcribe(
         # Read audio file
         content = await file.read()
         
-        # We need to process audio with librosa/processor
-        # Since librosa loads from file path or file-like object, we use io.BytesIO
-        # But librosa might not like raw bytes directly if format isn't detected easily without extension
-        # So we write to temp file?
-        # Actually transformers processor can handle raw audio arrays if we load them first.
-        
-        # Use soundfile/librosa to decode
-        # Use a temporary file to handle various formats (MP3, WebM, etc.)
         import tempfile
-        import os
         
         # Determine extension from filename if possible
         ext = os.path.splitext(file.filename)[1] if file.filename else ".wav"
         if not ext: ext = ".wav"
+        
+        logger.info(f"Transcription request: filename={file.filename}, ext={ext}, content_size={len(content)} bytes")
             
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
             tmp.write(content)
             tmp_path = tmp.name
             
         try:
-            # librosa.load is robust for many formats if ffmpeg is in PATH
             audio_array, sampling_rate = librosa.load(tmp_path, sr=None)
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
+        
+        duration = len(audio_array) / sampling_rate if sampling_rate > 0 else 0
+        amplitude = float(np.max(np.abs(audio_array))) if len(audio_array) > 0 else 0
+        logger.info(f"Audio loaded: sr={sampling_rate}, duration={duration:.2f}s, "
+                     f"samples={len(audio_array)}, max_amplitude={amplitude:.4f}")
+        
+        # Reject empty/silent audio early
+        if len(audio_array) == 0 or duration < 0.1:
+            logger.warning("Audio too short or empty!")
+            return {"text": "[Error: Audio file is empty or too short to transcribe]"}
+        if amplitude < 0.001:
+            logger.warning(f"Audio appears silent (max amplitude: {amplitude:.6f})")
+            return {"text": "[Error: Audio file appears to be silent]"}
         
         target_sr = msg_processor.feature_extractor.sampling_rate
         
@@ -205,11 +210,12 @@ async def transcribe(
         if sampling_rate != target_sr:
              audio_array = librosa.resample(audio_array, orig_sr=sampling_rate, target_sr=target_sr)
         
-        # Prepare inputs
-        # We frame this as a chat "What does the person say?"
-        user_prompt = "What does the person say?"
+        # Prompt for the model. Must be balanced:
+        # - Clear enough to trigger transcription
+        # - Not so forceful that the model hallucinates when audio is unclear
+        user_prompt = "Listen carefully to the audio and transcribe exactly what the person says. If the audio is unclear or contains no speech, say so."
         if prompt:
-            user_prompt = f"Transcribe this audio. Context: {prompt}"
+            user_prompt = f"{user_prompt} Additional context: {prompt}"
         
         conversation = [
              {"role": "user", "content": [
@@ -220,12 +226,10 @@ async def transcribe(
         
         # The apply_chat_template will format the text.
         text_prompt = msg_processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
-        audios = [audio_array]
-        
-        inputs = msg_processor(text=text_prompt, audios=audios if audios else [], return_tensors="pt", padding=True)
+        inputs = msg_processor(text=text_prompt, audio=[audio_array], return_tensors="pt", padding=True, sampling_rate=target_sr)
         inputs = inputs.to(model.device)
              
-        generate_ids = model.generate(**inputs, max_length=256)
+        generate_ids = model.generate(**inputs, max_new_tokens=256)
         generate_ids = generate_ids[:, inputs.input_ids.size(1):]
         
         response_text = msg_processor.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
@@ -361,12 +365,12 @@ async def chat_completions(req: ChatCompletionRequest):
 
         text_prompt = msg_processor.apply_chat_template(processed_messages, add_generation_prompt=True, tokenize=False)
         
-        inputs = msg_processor(text=text_prompt, audios=audios if audios else [], return_tensors="pt", padding=True)
+        inputs = msg_processor(text=text_prompt, audio=audios if audios else None, return_tensors="pt", padding=True, sampling_rate=target_sr)
         inputs = inputs.to(model.device)
 
         generate_ids = model.generate(
             **inputs, 
-            max_length=req.max_tokens,
+            max_new_tokens=req.max_tokens,
             temperature=req.temperature,
             top_p=req.top_p
         )
