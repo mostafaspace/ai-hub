@@ -6,10 +6,7 @@ Welcome to **AI-Hub**, the unified gateway for open source AI's suite of powerfu
 
 AI-Hub is designed to be a modular, scalable, and easy-to-use ecosystem for AI-powered creativity. Whether you're looking to generate expressive speech or compose unique musical tracks, AI-Hub brings these services together under one roof with a unified management system.
 
-## 📜 Development Protocol
-Please refer to [DEVELOPMENT_PROTOCOL.md](DEVELOPMENT_PROTOCOL.md) for mandatory rules on adding features and updating the launcher.
-
-## 🛠️ Current Services
+## ️ Current Services
 
 ### 🎙️ Qwen3 TTS
 High-fidelity text-to-speech generation powered by the latest Qwen models.
@@ -67,7 +64,7 @@ To support running multiple heavy models on consumer hardware (e.g., RTX 3090/40
 ### Installation
 1.  **Clone the Repository**:
     ```bash
-    git clone https://github.com/[your-username]/ai-hub.git
+    git clone https://github.com/mostafaspace/ai-hub.git
     cd ai-hub
     ```
 
