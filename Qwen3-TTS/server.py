@@ -4,7 +4,16 @@ import os
 # MUST be done before importing any packages that might trigger pydub (like qwen_tts or others)
 try:
     import imageio_ffmpeg
-    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+    import imageio_ffmpeg
+    # ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+    
+    # Force use of local copy if it exists to avoid long path/permission issues
+    local_ffmpeg = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ffmpeg.exe"))
+    if os.path.exists(local_ffmpeg):
+        ffmpeg_path = local_ffmpeg
+    else:
+         ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+         
     os.environ["PATH"] += os.pathsep + os.path.dirname(ffmpeg_path)
     
     import warnings
@@ -341,31 +350,76 @@ async def generate_voice_clone(
         
         # Read uploaded audio
         audio_bytes = await ref_audio.read()
-        audio_stream = io.BytesIO(audio_bytes)
         
-        # Load audio for qwen (expects path or tuple)
-        # We can pass data directly if supported, or save temp file.
-        # Using temp file is safer for 'librosa.load' or 'sf.read' internals usually
-        temp_filename = f"temp_ref_{int(time.time())}.wav"
-        with open(temp_filename, "wb") as f:
-            f.write(audio_bytes)
+        # Initialize paths for cleanup safety
+        temp_input_path = None
+        temp_wav_path = None
+
+        # Manual FFmpeg conversion to WAV to bypass pydub/librosa quirks
+        # We know AudioSegment.converter points to a valid ffmpeg.exe
+        
+        # 1. Save upload to temp file with original extension
+        import tempfile
+        import subprocess
+        original_ext = os.path.splitext(ref_audio.filename)[1] or ".tmp"
+        
+        # Create input temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=original_ext, prefix="tts_upload_") as tmp_in:
+            tmp_in.write(audio_bytes)
+            temp_input_path = tmp_in.name
+            
+        # Create output temp file (WAV)
+        # We close it immediately so ffmpeg can write to it
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav", prefix="tts_converted_") as tmp_out:
+            temp_wav_path = tmp_out.name
             
         try:
+            # 2. Convert to WAV using ffmpeg
+            print(f"Converting {temp_input_path} to {temp_wav_path} using {AudioSegment.converter}...")
+            print(f"Input file size: {os.path.getsize(temp_input_path)} bytes")
+            
+            try:
+                subprocess.run(
+                    [AudioSegment.converter, "-y", "-i", temp_input_path, temp_wav_path],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+            except subprocess.CalledProcessError as e:
+                err_msg = f"FFmpeg conversion failed: {e.stderr.decode('utf-8', errors='ignore')}"
+                print(err_msg)
+                raise HTTPException(status_code=500, detail=err_msg)
+
+            
+            # 3. Pass converted WAV to model
             wavs, sr = model.generate_voice_clone(
                 text=text,
                 language=language if language != "Auto" else "Auto",
-                ref_audio=temp_filename,
+                ref_audio=temp_wav_path,
                 ref_text=ref_text
             )
+            
         finally:
-            if os.path.exists(temp_filename):
-                os.remove(temp_filename)
+            # 4. Cleanup both files
+            for path in [temp_input_path, temp_wav_path]:
+                 try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                 except Exception as e:
+                    print(f"Warning: Could not delete temp file {path}: {e}")
+
         
         return audio_to_stream(wavs[0], sr, response_format)
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"Error: {e}")
+        # Cleanup is handled in finally block of inner try/except
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host=HOST, port=PORT)

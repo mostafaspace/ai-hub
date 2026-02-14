@@ -21,6 +21,51 @@ import ctypes
 # Configuration
 import config
 
+
+def kill_port_occupants():
+    """Kill any existing processes occupying our configured ports."""
+    ports = [config.TTS_PORT, config.MUSIC_PORT, config.ASR_PORT]
+    pids_to_kill = set()
+
+    for port in ports:
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                # Match lines like:  TCP  0.0.0.0:8000  0.0.0.0:0  LISTENING  12345
+                parts = line.split()
+                if len(parts) >= 5 and f":{port}" in parts[1] and parts[3] == "LISTENING":
+                    pid = int(parts[4])
+                    if pid > 0:
+                        pids_to_kill.add((port, pid))
+        except Exception:
+            pass
+
+    if not pids_to_kill:
+        return
+
+    print(f"Found {len(pids_to_kill)} process(es) occupying server ports:")
+    killed = set()
+    for port, pid in pids_to_kill:
+        if pid in killed:
+            continue
+        print(f"  Killing PID {pid} on port {port}...")
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(pid)],
+                capture_output=True, timeout=5
+            )
+            killed.add(pid)
+        except Exception as e:
+            print(f"  Warning: Could not kill PID {pid}: {e}")
+
+    # Brief pause for OS to release the sockets
+    if killed:
+        time.sleep(1)
+
+
 SERVERS = [
     {
         "name": "TTS",
@@ -68,10 +113,12 @@ def stream_reader(process, server_name, color):
             
     # Process ended
     if not stop_event.is_set():
+        print(f"DEBUG: {server_name} stream ended. returncode: {process.poll()}")
         log_queue.put(f"\033[91m[{server_name}] Process exited with code {process.poll()}\033[0m")
 
 def start_servers():
     """Start all servers as subprocesses."""
+    kill_port_occupants()
     for server_conf in SERVERS:
         print(f"Starting {server_conf['name']} server...")
         env = os.environ.copy()
