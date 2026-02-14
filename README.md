@@ -31,6 +31,32 @@ Automatic Speech Recognition and Audio Intelligence.
 
 ---
 
+## 💻 System Requirements
+
+AI-Hub runs powerful generative models locally. Below are the estimated VRAM requirements for each service:
+
+| Service | Model | Precision | Estimated VRAM |
+| :--- | :--- | :--- | :--- |
+| **Qwen3 TTS** | 1.7B Custom/Design/Base | float16 | ~4-6 GB |
+| **ACE-Step Music** | 1.5 Turbo (DiT + 1.7B LM) | float16 | ~8-12 GB* |
+| **Qwen3 ASR** | Qwen2-Audio-7B | float16 | ~16-18 GB |
+
+> [!NOTE]
+> **ACE-Step Music** scales with available VRAM. It can run in "DiT-only" mode on as little as **4GB VRAM**, or use larger Language Models (up to 4B) if 16GB+ is available.
+
+### 🧠 Smart VRAM Management (Auto-Unload)
+To support running multiple heavy models on consumer hardware (e.g., RTX 3090/4090), AI-Hub implements **Automatic Model Unloading**:
+- Models are **lazy-loaded** only when an API request is received.
+- If a model remains idle (default: 60 seconds), it is **automatically unloaded** from VRAM to make room for other services.
+- This allows you to host all services even if your total VRAM is less than the sum of all models.
+
+### Overall Recommendation
+- **Minimum**: 8GB VRAM (Supports TTS and Music comfortably).
+- **Recommended**: 24GB VRAM (Supports all models including 7B ASR simultaneously).
+- **Storage**: ~50GB+ for model weights (stored in `D:\hf_models` by default).
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
