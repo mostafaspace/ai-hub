@@ -18,8 +18,10 @@ echo   Available Servers:
 echo.
 echo   [1] Qwen3 TTS Server         (Port 8000) - Text-to-Speech
 echo   [2] ACE-Step Music Server    (Port 8001) - Music Generation
+echo   [3] Qwen3 ASR Server         (Port 8002) - Speech-to-Text
 echo.
 echo   [A] Start ALL Servers (with auto-restart)
+echo   [U] Unified Server (All in one window)
 echo   [R] Restart ALL Servers
 echo   [K] Kill ALL Servers
 echo   [Q] Quit
@@ -29,7 +31,9 @@ set /p choice="Select an option: "
 
 if /i "%choice%"=="1" goto TTS
 if /i "%choice%"=="2" goto ACESTEP
+if /i "%choice%"=="3" goto ASR
 if /i "%choice%"=="A" goto START_ALL
+if /i "%choice%"=="U" goto UNIFIED
 if /i "%choice%"=="R" goto RESTART_ALL
 if /i "%choice%"=="K" goto KILL_ALL
 if /i "%choice%"=="Q" goto EXIT
@@ -37,16 +41,29 @@ echo Invalid choice. Press any key to try again...
 pause >nul
 goto MENU
 
+:UNIFIED
+call :KILL_ALL
+echo.
+echo Starting Unified Server (All-in-One)...
+echo Press Ctrl+C in the new window to stop all servers.
+echo.
+start "Unified AI Server" cmd /k "cd /d %~dp0 && python unified_server.py"
+goto MENU
+
 :KILL_ALL
 echo.
 echo Stopping any existing servers...
-:: Kill Python processes on ports 8000 and 8001
+:: Kill Python processes on ports 8000, 8001, 8002
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8000.*LISTENING"') do (
     echo Killing process on port 8000 (PID: %%a)
     taskkill /F /PID %%a >nul 2>&1
 )
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8001.*LISTENING"') do (
     echo Killing process on port 8001 (PID: %%a)
+    taskkill /F /PID %%a >nul 2>&1
+)
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8002.*LISTENING"') do (
+    echo Killing process on port 8002 (PID: %%a)
     taskkill /F /PID %%a >nul 2>&1
 )
 echo All servers stopped.
@@ -71,6 +88,15 @@ echo ACE-Step Server starting in new window!
 pause
 goto MENU
 
+:ASR
+call :KILL_PORT 8002
+echo.
+echo Starting Qwen3 ASR Server on port 8002...
+start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && pip install -r requirements.txt -q && python server.py"
+echo ASR Server starting in new window!
+pause
+goto MENU
+
 :RESTART_ALL
 call :KILL_ALL
 goto START_ALL
@@ -85,32 +111,31 @@ echo.
 :START_ALL
 echo Checking for existing servers...
 :: Kill any existing servers first
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8000.*LISTENING"') do (
-    echo Stopping existing TTS server (PID: %%a)
-    taskkill /F /PID %%a >nul 2>&1
-)
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8001.*LISTENING"') do (
-    echo Stopping existing ACE-Step server (PID: %%a)
-    taskkill /F /PID %%a >nul 2>&1
-)
+call :KILL_ALL
 timeout /t 2 >nul
 
 echo.
-echo [1/2] Starting Qwen3 TTS Server (port 8000)...
+echo [1/3] Starting Qwen3 TTS Server (port 8000)...
 start "Qwen3 TTS Server" cmd /k "cd /d %~dp0Qwen3-TTS && set HF_HOME=D:\hf_models&& pip install -r requirements.txt -q && python server.py"
 timeout /t 3 >nul
 
-echo [2/2] Starting ACE-Step Music Server (port 8001)...
+echo [2/3] Starting ACE-Step Music Server (port 8001)...
 start "ACE-Step Music Server" cmd /k "cd /d %~dp0ACE-Step-1.5 && uv run acestep-api --host 0.0.0.0 --port 8001"
+timeout /t 3 >nul
+
+echo [3/3] Starting Qwen3 ASR Server (port 8002)...
+start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && pip install -r requirements.txt -q && python server.py"
+
 echo.
 echo ============================================================
 echo   All servers are starting in separate windows!
 echo.
-echo   Endpoints (Available at 192.168.1.26):
-echo     TTS:       http://192.168.1.26:8000
-echo     ACE-Step:  http://192.168.1.26:8001
+echo   Endpoints:
+echo     TTS:       http://localhost:8000
+echo     ACE-Step:  http://localhost:8001
+echo     ASR:       http://localhost:8002
 echo.
-echo   Wait ~30-60 seconds for models to load, then test with:
+echo   Wait ~60 seconds for models to load, then test with:
 echo     python test_all_servers.py
 echo ============================================================
 

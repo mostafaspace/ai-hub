@@ -1145,9 +1145,62 @@ def create_app() -> FastAPI:
         }
         app.state.idle_timeout = 600.0  # 10 minutes
 
-        # Temporary directory for saving generated audio files
         app.state.temp_audio_dir = os.path.join(tmp_root, "api_audio")
         os.makedirs(app.state.temp_audio_dir, exist_ok=True)
+        
+        # Start background idle checker
+        async def idle_checker():
+            """Background task to unload models when idle."""
+            while True:
+                await asyncio.sleep(10)  # Check every 10 seconds
+                try:
+                    now = time.time()
+                    timeout = app.state.idle_timeout
+                    
+                    # Check Main Handler (DiT 1)
+                    if app.state._initialized and (now - app.state.last_used["handler"] > timeout):
+                        async with app.state._init_lock:
+                            if app.state._initialized:
+                                print(f"[Auto-Unload] Unloading Main DiT model after {timeout}s inactivity...")
+                                app.state.handler.unload()
+                                app.state._initialized = False
+                                torch.cuda.empty_cache()
+                                
+                    # Check Handler 2 (DiT 2)
+                    if getattr(app.state, "_initialized2", False) and (now - app.state.last_used["handler2"] > timeout):
+                        async with app.state._init_lock2:
+                            if app.state._initialized2:
+                                print(f"[Auto-Unload] Unloading DiT Model 2 after {timeout}s inactivity...")
+                                app.state.handler2.unload()
+                                app.state._initialized2 = False
+                                torch.cuda.empty_cache()
+
+                    # Check Handler 3 (DiT 3)
+                    if getattr(app.state, "_initialized3", False) and (now - app.state.last_used["handler3"] > timeout):
+                        async with app.state._init_lock3:
+                            if app.state._initialized3:
+                                print(f"[Auto-Unload] Unloading DiT Model 3 after {timeout}s inactivity...")
+                                app.state.handler3.unload()
+                                app.state._initialized3 = False
+                                torch.cuda.empty_cache()
+                                
+                    # Check LLM Handler
+                    if app.state._llm_initialized and (now - app.state.last_used["llm_handler"] > timeout):
+                        async with app.state._llm_init_lock:
+                            if app.state._llm_initialized:
+                                print(f"[Auto-Unload] Unloading LLM model after {timeout}s inactivity...")
+                                app.state.llm_handler.unload()
+                                app.state._llm_initialized = False
+                                torch.cuda.empty_cache()
+                                
+                except Exception as e:
+                    print(f"[Idle Checker Error] {e}")
+
+        # Start the background task
+        loop = asyncio.get_event_loop()
+        app.state.idle_task = loop.create_task(idle_checker())
+
+        yield
 
         async def _idle_monitor() -> None:
             """Background task to unload handlers after idle timeout."""

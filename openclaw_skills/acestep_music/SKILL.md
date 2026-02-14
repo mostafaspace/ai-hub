@@ -15,7 +15,8 @@ This skill provides the API specification for the ACE-Step Music server. Agents 
 > [!IMPORTANT]
 > **Polling Time**: Music generation takes **20-60 seconds**. You must poll the status until it completes.
 > **First Request Slow**: The first request may take longer as the model loads into memory.
-> **Network Access**: Ensure the agent can reach `192.168.1.26` (or `127.0.0.1` if local).
+> **Network Access**: Ensure the agent can reach the server IP (default: `192.168.1.26`).
+> **Cold Start**: The service uses dynamic model loading. The first request after interactivity may take **extra time** (up to 20s) to initialize.
 
 ## Capabilities
 
@@ -111,8 +112,8 @@ Using the `file` path from the polling result (e.g., `/v1/audio?path=...`), cons
 
 ### Generation Stuck on "Processing"
 -   **Wait Longer**: Complex prompts or high loads can take up to 2 minutes.
--   **Check Server Logs**: If it stays stuck forever, the server might have run out of VRAM.
+-   **Contact Admin**: If it fails consistently, the service might be down.
 
 ### Connection Refused
--   **Check IP**: Ensure `192.168.1.26` is correct and reachable.
--   **Firewall**: Ensure port `8001` is open.
+-   **Check IP**: Ensure the server IP is reachable.
+-   **Firewall**: Ensure port `8001` is allowed.

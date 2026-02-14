@@ -14,7 +14,8 @@ This skill provides the API specification for the Qwen3 TTS server. Agents can u
 
 > [!IMPORTANT]
 > **Timeout Setting**: The first request may take up to **60-120 seconds** to load the model. Ensure your HTTP client has a long timeout.
-> **Network Access**: Ensure the agent can reach `192.168.1.26`. If running locally on the same machine, you can use `http://127.0.0.1:8000`.
+> **Network Access**: Ensure the agent can reach the server IP (default: `192.168.1.26:8000`).
+> **Cold Start**: The service uses dynamic model loading. The first request after interactivity may take **extra time** (up to 20s) to initialize.
 
 ## Capabilities
 

@@ -48,16 +48,19 @@ PORT = 8000
 
 
 def _resolve_device_map() -> str:
-    """Prefer the second GPU when available, otherwise use the first GPU."""
+    """
+    Resolve device map strategy.
+    
+    If QWEN_TTS_DEVICE is set, use it.
+    Otherwise, default to 'auto' to enable multi-GPU support via accelerate.
+    This allows the model to be split across available GPUs (e.g. pooling VRAM).
+    """
     env_device = os.getenv("QWEN_TTS_DEVICE")
     if env_device:
         return env_device.strip()
 
-    if torch.cuda.is_available():
-        gpu_count = torch.cuda.device_count()
-        target_idx = 1 if gpu_count > 1 else 0
-        return f"cuda:{target_idx}"
-    return "cpu"
+    # "auto" uses accelerate to distribute model across GPUs
+    return "auto"
 
 
 DEVICE_MAP = _resolve_device_map()
@@ -70,10 +73,11 @@ MODEL_BASE = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
 
 import threading
 
+import gc
 # Global model cache to manage VRAM
 # Simple LRU-style: keep only one active model to be safe on VRAM
 class ModelManager:
-    def __init__(self, idle_timeout: float = 600.0, check_interval: float = 30.0): # 10 minutes default
+    def __init__(self, idle_timeout: float = 60.0, check_interval: float = 10.0): # 60 seconds default
         self.models = {}
         self.current_model_type = None
         self.last_active = time.time()
@@ -99,6 +103,7 @@ class ModelManager:
         with self.lock:
             self.models.clear()
             self.current_model_type = None
+            gc.collect()
             torch.cuda.empty_cache()
 
     def get_model(self, model_type: Literal["custom", "design", "base"]):

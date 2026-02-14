@@ -103,15 +103,30 @@ class AceStepHandler:
 
     def unload(self):
         """Unload models and free VRAM."""
-        logger.info("[unload] Unloading ACE-Step models to free VRAM...")
-        self.model = None
-        self.vae = None
-        self.text_encoder = None
-        self.text_tokenizer = None
-        self.silence_latent = None
-        self.reward_model = None
-        self._base_decoder = None
-        torch.cuda.empty_cache()
+        try:
+            logger.info("[unload] Unloading ACE-Step models to free VRAM...")
+            if hasattr(self, "model"): del self.model
+            if hasattr(self, "vae"): del self.vae
+            if hasattr(self, "text_encoder"): del self.text_encoder
+            if hasattr(self, "text_tokenizer"): del self.text_tokenizer
+            if hasattr(self, "silence_latent"): del self.silence_latent
+            if hasattr(self, "reward_model"): del self.reward_model
+            if hasattr(self, "_base_decoder"): del self._base_decoder
+            
+            self.model = None
+            self.vae = None
+            self.text_encoder = None
+            self.text_tokenizer = None
+            self.silence_latent = None
+            self.reward_model = None
+            self._base_decoder = None
+            
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+            logger.info("[unload] ACE-Step models unloaded successfully.")
+        except Exception as e:
+            logger.error(f"[unload] Error during unload: {e}")
     
     def get_available_checkpoints(self) -> str:
         """Return project root directory path"""
@@ -425,29 +440,30 @@ class AceStepHandler:
             acestep_v15_checkpoint_path = os.path.join(checkpoint_dir, config_path)
             if os.path.exists(acestep_v15_checkpoint_path):
                 # Determine attention implementation
-                if use_flash_attention and self.is_flash_attention_available():
-                    attn_implementation = "flash_attention_2"
-                    self.dtype = torch.bfloat16
-                else:
-                    attn_implementation = "sdpa"
-
+                attn_implementation = "sdpa" if use_flash_attention and self.is_flash_attention_available() else "eager"
                 try:
                     logger.info(f"[initialize_service] Attempting to load model with attention implementation: {attn_implementation}")
+                    # Use device_map="auto" for multi-GPU support if available
+                    device_map = "auto" if device == "cuda" or (isinstance(device, str) and device.startswith("cuda")) else None
+                    
                     self.model = AutoModel.from_pretrained(
                         acestep_v15_checkpoint_path, 
                         trust_remote_code=True, 
                         attn_implementation=attn_implementation,
-                        dtype="bfloat16"
+                        dtype="bfloat16",
+                        device_map=device_map
                     )
                 except Exception as e:
                     logger.warning(f"[initialize_service] Failed to load model with {attn_implementation}: {e}")
                     if attn_implementation == "sdpa":
-                        logger.info("[initialize_service] Falling back to eager attention")
+                        logger.warning("[initialize_service] Falling back to 'eager' attention implementation.")
                         attn_implementation = "eager"
                         self.model = AutoModel.from_pretrained(
                             acestep_v15_checkpoint_path, 
                             trust_remote_code=True, 
-                            attn_implementation=attn_implementation
+                            attn_implementation=attn_implementation,
+                            dtype="bfloat16",
+                            device_map=device_map
                         )
                     else:
                         raise e

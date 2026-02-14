@@ -273,11 +273,14 @@ class LLMHandler:
     def _load_pytorch_model(self, model_path: str, device: str) -> Tuple[bool, str]:
         """Load PyTorch model from path and return (success, status_message)"""
         try:
-            self.llm = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
-            if not self.offload_to_cpu:
-                self.llm = self.llm.to(device).to(self.dtype)
-            else:
-                self.llm = self.llm.to("cpu").to(self.dtype)
+            self.llm = AutoModelForCausalLM.from_pretrained(
+                model_path, 
+                trust_remote_code=True,
+                device_map="auto" if device == "cuda" or (isinstance(device, str) and device.startswith("cuda")) else None
+            )
+            # Remove manual to(device) calls since device_map handles it
+            if self.offload_to_cpu:
+                 self.llm = self.llm.to("cpu")
             self.llm.eval()
             self.llm_backend = "pt"
             self.llm_initialized = True
