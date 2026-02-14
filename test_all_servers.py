@@ -21,14 +21,15 @@ import json
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-# IP Configuration - Use device IP instead of localhost
-# DEVICE_IP = "192.168.1.26"
-DEVICE_IP = "127.0.0.1" # Default to localhost for local testing, user can change
+import config
+
+# IP Configuration - Use device IP from config
+DEVICE_IP = config.TEST_DEVICE_IP
 
 SERVERS = [
-    {"name": "Qwen3 TTS", "port": 8000, "health": "/health", "url": f"http://{DEVICE_IP}:8000"},
-    {"name": "ACE-Step Music", "port": 8001, "health": "/health", "url": f"http://{DEVICE_IP}:8001"},
-    {"name": "Qwen3 ASR", "port": 8002, "health": "/health", "url": f"http://{DEVICE_IP}:8002"},
+    {"name": "Qwen3 TTS", "port": config.TTS_PORT, "health": "/health", "url": f"http://{DEVICE_IP}:{config.TTS_PORT}"},
+    {"name": "ACE-Step Music", "port": config.MUSIC_PORT, "health": "/health", "url": f"http://{DEVICE_IP}:{config.MUSIC_PORT}"},
+    {"name": "Qwen3 ASR", "port": config.ASR_PORT, "health": "/health", "url": f"http://{DEVICE_IP}:{config.ASR_PORT}"},
 ]
 
 

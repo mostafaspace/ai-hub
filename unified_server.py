@@ -19,17 +19,19 @@ import os
 import ctypes
 
 # Configuration
+import config
+
 SERVERS = [
     {
         "name": "TTS",
-        "cwd": "Qwen3-TTS",
-        "cmd": ["python", "server.py"],
+        "cwd": "Qwen3-TTS", 
+        "cmd": ["python", "server.py"], # It will pick up config from within its own code now too
         "color": "\033[96m",  # Cyan
     },
     {
         "name": "MUSIC",
         "cwd": "ACE-Step-1.5",
-        "cmd": ["uv", "run", "acestep-api", "--host", "0.0.0.0", "--port", "8001"],
+        "cmd": ["uv", "run", "acestep-api", "--host", config.HOST, "--port", str(config.MUSIC_PORT)],
         "color": "\033[95m",  # Magenta
     },
     {
@@ -70,33 +72,33 @@ def stream_reader(process, server_name, color):
 
 def start_servers():
     """Start all servers as subprocesses."""
-    for config in SERVERS:
-        print(f"Starting {config['name']} server...")
+    for server_conf in SERVERS:
+        print(f"Starting {server_conf['name']} server...")
         env = os.environ.copy()
-        env["HF_HOME"] = r"D:\hf_models" # Ensure explicit HF_HOME
+        env["HF_HOME"] = config.HF_HOME # Ensure explicit HF_HOME
         env["PYTHONUNBUFFERED"] = "1"    # Force unbuffered output
         
         try:
             p = subprocess.Popen(
-                config["cmd"],
-                cwd=config["cwd"],
+                server_conf["cmd"],
+                cwd=server_conf["cwd"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, # Merge stderr into stdout
                 env=env,
-                bufsize=1, # Line buffered
+                bufsize=0, # Unbuffered (binary)
             )
             processes.append(p)
             
             # Start monitoring thread
             t = threading.Thread(
                 target=stream_reader, 
-                args=(p, config["name"], config["color"]),
+                args=(p, server_conf["name"], server_conf["color"]),
                 daemon=True
             )
             t.start()
             
         except Exception as e:
-            print(f"Failed to start {config['name']}: {e}")
+            print(f"Failed to start {server_conf['name']}: {e}")
 
 def stop_servers(signum=None, frame=None):
     """Stop all servers gracefully."""

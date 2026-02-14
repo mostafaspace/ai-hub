@@ -43,33 +43,35 @@ except ImportError:
     exit(1)
 
 # --- Configuration ---
-HOST = "0.0.0.0"
-PORT = 8000
+import sys
+# Add parent directory to sys.path to import config
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import config
 
+HOST = config.HOST
+PORT = config.TTS_PORT
 
 def _resolve_device_map() -> str:
     """
     Resolve device map strategy.
     
     If QWEN_TTS_DEVICE is set, use it.
-    Otherwise, default to 'auto' to enable multi-GPU support via accelerate.
-    This allows the model to be split across available GPUs (e.g. pooling VRAM).
+    Otherwise, default to config.DEVICE_MAP_DEFAULT.
     """
     env_device = os.getenv("QWEN_TTS_DEVICE")
     if env_device:
         return env_device.strip()
 
-    # "auto" uses accelerate to distribute model across GPUs
-    return "auto"
+    return config.DEVICE_MAP_DEFAULT
 
 
 DEVICE_MAP = _resolve_device_map()
 DEVICE = "cuda" if DEVICE_MAP.startswith("cuda") else "cpu"
 
-# Model paths (Hugging Face IDs or local paths)
-MODEL_CUSTOM = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
-MODEL_DESIGN = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
-MODEL_BASE = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+# Model paths (from config)
+MODEL_CUSTOM = config.TTS_MODEL_CUSTOM
+MODEL_DESIGN = config.TTS_MODEL_DESIGN
+MODEL_BASE = config.TTS_MODEL_BASE
 
 import threading
 
