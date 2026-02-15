@@ -958,6 +958,7 @@ async def _ensure_initialized(app: FastAPI, model_idx: int = 1) -> None:
             _ensure_model_downloaded("vae", checkpoint_dir)
             
             # Initialize
+
             status_msg, ok = h.initialize_service(
                 project_root=app.state.project_root,
                 config_path=config_path,
@@ -1048,6 +1049,7 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+
         # Clear proxy env that may affect downstream libs
         for proxy_var in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]:
             os.environ.pop(proxy_var, None)
@@ -1200,7 +1202,7 @@ def create_app() -> FastAPI:
         loop = asyncio.get_event_loop()
         app.state.idle_task = loop.create_task(idle_checker())
 
-        yield
+
 
         async def _idle_monitor() -> None:
             """Background task to unload handlers after idle timeout."""
@@ -1412,6 +1414,7 @@ def create_app() -> FastAPI:
             
             # Ensure selected handler is initialized
             await _ensure_initialized(app, selected_handler_idx)
+
             
             handler_names = {1: "handler", 2: "handler2", 3: "handler3"}
             app.state.last_used[handler_names[selected_handler_idx]] = time.time()
@@ -1883,6 +1886,7 @@ def create_app() -> FastAPI:
         async def _queue_worker(worker_idx: int) -> None:
             while True:
                 job_id, req = await app.state.job_queue.get()
+
                 try:
                     async with app.state.pending_lock:
                         try:

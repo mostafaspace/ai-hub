@@ -210,12 +210,8 @@ async def transcribe(
         if sampling_rate != target_sr:
              audio_array = librosa.resample(audio_array, orig_sr=sampling_rate, target_sr=target_sr)
         
-        # Prompt for the model. Must be balanced:
-        # - Clear enough to trigger transcription
-        # - Not so forceful that the model hallucinates when audio is unclear
-        user_prompt = "Listen carefully to the audio and transcribe exactly what the person says. If the audio is unclear or contains no speech, say so."
-        if prompt:
-            user_prompt = f"{user_prompt} Additional context: {prompt}"
+        # Simple direct prompt - Qwen2-Audio responds best to direct questions
+        user_prompt = "What does the person say?" if not prompt else prompt
         
         conversation = [
              {"role": "user", "content": [

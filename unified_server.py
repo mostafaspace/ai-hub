@@ -76,7 +76,7 @@ SERVERS = [
     {
         "name": "MUSIC",
         "cwd": "ACE-Step-1.5",
-        "cmd": ["uv", "run", "acestep-api", "--host", config.HOST, "--port", str(config.MUSIC_PORT)],
+        "cmd": ["uv", "run", "python", "-u", "-m", "acestep.api_server", "--host", config.HOST, "--port", str(config.MUSIC_PORT)],
         "color": "\033[95m",  # Magenta
     },
     {
@@ -125,6 +125,10 @@ def start_servers():
         env["HF_HOME"] = config.HF_HOME # Ensure explicit HF_HOME
         env["PYTHONUNBUFFERED"] = "1"    # Force unbuffered output
         
+        # Force single GPU (device 0) for Music server to prevent tensor device mismatch
+        if server_conf["name"] == "MUSIC":
+            env["CUDA_VISIBLE_DEVICES"] = "0"
+
         try:
             p = subprocess.Popen(
                 server_conf["cmd"],
