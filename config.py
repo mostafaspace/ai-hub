@@ -9,6 +9,7 @@ HOST = "0.0.0.0"
 TTS_PORT = 8000
 MUSIC_PORT = 8001
 ASR_PORT = 8002
+VISION_PORT = 8003
 
 # --- Client / Test Configuration ---
 # IP and ports to use when running tests locally.
@@ -26,6 +27,10 @@ TTS_MODEL_BASE = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
 
 # Qwen3 ASR Model
 ASR_MODEL_PATH = "Qwen/Qwen2-Audio-7B-Instruct"
+
+# GLM-Image Vision Model
+VISION_MODEL = "zai-org/GLM-Image"
+VISION_OFFLOAD_CPU = True  # Critical for saving VRAM on <80GB GPUs
 
 # --- Device Configuration ---
 # Default strategy: "auto" (Accelerate), "cuda", or "cpu"

@@ -1,0 +1,196 @@
+openapi: 3.0.0
+info:
+  title: GLM-Image Vision API
+  description: API for generating images using the GLM-Image model via local server.
+  version: 2.0.0
+servers:
+  - url: http://192.168.1.26:8003
+    description: Local GLM-Image Vision Server
+
+paths:
+  /v1/images/generations:
+    post:
+      summary: Generate Image (Text-to-Image)
+      description: Generate an image from a text prompt. OpenAI-compatible endpoint.
+      operationId: generateImage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt:
+                  type: string
+                  description: Text description of the image to generate.
+                n:
+                  type: integer
+                  description: Number of images to generate.
+                  default: 1
+                size:
+                  type: string
+                  description: "Image dimensions as WIDTHxHEIGHT (must be divisible by 32)."
+                  default: "1024x1024"
+                response_format:
+                  type: string
+                  enum: [url, b64_json]
+                  description: Response format — URL to download or base64-encoded PNG.
+                  default: url
+                num_inference_steps:
+                  type: integer
+                  description: Number of diffusion steps. Higher = better quality, slower.
+                  default: 50
+                guidance_scale:
+                  type: number
+                  description: Classifier-free guidance scale.
+                  default: 1.5
+              required:
+                - prompt
+      responses:
+        '200':
+          description: Generated image(s)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  created:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        url:
+                          type: string
+                          description: URL to download the generated image (if response_format=url).
+                        b64_json:
+                          type: string
+                          description: Base64-encoded PNG image (if response_format=b64_json).
+                        revised_prompt:
+                          type: string
+
+  /v1/images/edits:
+    post:
+      summary: Edit Image (Image-to-Image)
+      description: Edit or transform an existing image using a text prompt.
+      operationId: editImage
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: The input image file (PNG/JPG).
+                prompt:
+                  type: string
+                  description: Text instruction for how to modify the image.
+                size:
+                  type: string
+                  description: "Output size as WIDTHxHEIGHT. Defaults to input image size."
+                response_format:
+                  type: string
+                  enum: [url, b64_json]
+                  default: url
+                num_inference_steps:
+                  type: integer
+                  default: 50
+                guidance_scale:
+                  type: number
+                  default: 1.5
+              required:
+                - image
+                - prompt
+      responses:
+        '200':
+          description: Edited image
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  created:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        url:
+                          type: string
+                        b64_json:
+                          type: string
+                        revised_prompt:
+                          type: string
+
+  /v1/models:
+    get:
+      summary: List Models
+      description: List available vision models and capabilities.
+      operationId: listModels
+      responses:
+        '200':
+          description: List of models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        object:
+                          type: string
+                        owned_by:
+                          type: string
+                        capabilities:
+                          type: array
+                          items:
+                            type: string
+
+  /health:
+    get:
+      summary: Health Check
+      description: Check if the server is running and model load status.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Server status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                  model:
+                    type: string
+                  model_loaded:
+                    type: boolean
+
+  /v1/internal/unload:
+    post:
+      summary: Unload Model
+      description: Manually unload the model from VRAM.
+      operationId: unloadModel
+      responses:
+        '200':
+          description: Model unloaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string

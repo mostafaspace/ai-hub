@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+requests
+Pillow
+accelerate>=0.33.0
+torch>=2.4.0
+protobuf
+sentencepiece
+git+https://github.com/huggingface/transformers.git
+git+https://github.com/huggingface/diffusers.git

@@ -24,7 +24,7 @@ import config
 
 def kill_port_occupants():
     """Kill any existing processes occupying our configured ports."""
-    ports = [config.TTS_PORT, config.MUSIC_PORT, config.ASR_PORT]
+    ports = [config.TTS_PORT, config.MUSIC_PORT, config.ASR_PORT, config.VISION_PORT]
     pids_to_kill = set()
 
     for port in ports:
@@ -84,6 +84,12 @@ SERVERS = [
         "cwd": "Qwen3-ASR",
         "cmd": ["python", "server.py"],
         "color": "\033[93m",  # Yellow
+    },
+    {
+        "name": "VISION",
+        "cwd": "Vision-Service",
+        "cmd": ["python", "vision_server.py"],
+        "color": "\033[92m",  # Green
     },
 ]
 
