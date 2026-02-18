@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 torch
-transformers
+transformers>=4.57
 accelerate
 soundfile
 numpy

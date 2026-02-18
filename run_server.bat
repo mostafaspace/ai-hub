@@ -80,7 +80,7 @@ goto :EOF
 call :KILL_PORT 8000
 echo.
 echo Starting Qwen3 TTS Server on port 8000...
-start "Qwen3 TTS Server" cmd /k "cd /d %~dp0Qwen3-TTS && set HF_HOME=D:\hf_models&& pip install -r requirements.txt -q && python server.py"
+start "Qwen3 TTS Server" cmd /k "cd /d %~dp0Qwen3-TTS && set HF_HOME=D:\hf_models&& python server.py"
 echo TTS Server starting in new window!
 pause
 goto MENU
@@ -98,7 +98,7 @@ goto MENU
 call :KILL_PORT 8002
 echo.
 echo Starting Qwen3 ASR Server on port 8002...
-start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && pip install -r requirements.txt -q && python server.py"
+start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && python server.py"
 echo ASR Server starting in new window!
 pause
 goto MENU
@@ -107,7 +107,7 @@ goto MENU
 call :KILL_PORT 8003
 echo.
 echo Starting Vision Service on port 8003...
-start "Vision Service" cmd /k "cd /d %~dp0Vision-Service && set HF_HOME=D:\hf_models && pip install -r requirements.txt -q && python vision_server.py"
+start "Vision Service" cmd /k "cd /d %~dp0Vision-Service && set HF_HOME=D:\hf_models && python vision_server.py"
 echo Vision Service starting in new window!
 pause
 goto MENU
@@ -131,7 +131,7 @@ timeout /t 2 >nul
 
 echo.
 echo [1/4] Starting Qwen3 TTS Server (port 8000)...
-start "Qwen3 TTS Server" cmd /k "cd /d %~dp0Qwen3-TTS && set HF_HOME=D:\hf_models&& pip install -r requirements.txt -q && python server.py"
+start "Qwen3 TTS Server" cmd /k "cd /d %~dp0Qwen3-TTS && set HF_HOME=D:\hf_models&& python server.py"
 timeout /t 3 >nul
 
 echo [2/4] Starting ACE-Step Music Server (port 8001)...
@@ -139,11 +139,11 @@ start "ACE-Step Music Server" cmd /k "cd /d %~dp0ACE-Step-1.5 && uv run acestep-
 timeout /t 3 >nul
 
 echo [3/4] Starting Qwen3 ASR Server (port 8002)...
-start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && pip install -r requirements.txt -q && python server.py"
+start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && python server.py"
 timeout /t 3 >nul
 
 echo [4/4] Starting Vision Service (port 8003)...
-start "Vision Service" cmd /k "cd /d %~dp0Vision-Service && set HF_HOME=D:\hf_models && pip install -r requirements.txt -q && python vision_server.py"
+start "Vision Service" cmd /k "cd /d %~dp0Vision-Service && set HF_HOME=D:\hf_models && python vision_server.py"
 
 echo.
 echo ============================================================

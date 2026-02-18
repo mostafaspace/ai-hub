@@ -194,3 +194,17 @@ paths:
                 properties:
                   status:
                     type: string
+    get:
+      summary: Unload Model (GET)
+      description: Manually unload the model from VRAM (GET variant).
+      operationId: unloadModelGet
+      responses:
+        '200':
+          description: Model unloaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string

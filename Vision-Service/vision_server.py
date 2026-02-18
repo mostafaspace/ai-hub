@@ -85,6 +85,7 @@ def load_model():
 
             logger.info("GLM-Image loaded successfully.")
         except Exception as e:
+            pipeline = None  # Reset so next request can retry loading
             logger.error(f"Failed to load model: {e}")
             logger.error(traceback.format_exc())
             raise HTTPException(status_code=500, detail=f"Model loading failed: {str(e)}")
@@ -314,6 +315,7 @@ async def edit_image(
 
 
 @app.post("/v1/internal/unload")
+@app.get("/v1/internal/unload")
 async def manual_unload():
     """Manually unload the model to free VRAM."""
     unload_model()
