@@ -248,6 +248,12 @@ def audio_to_stream(audio_data, sample_rate, fmt):
 def health_check():
     return {"status": "running", "device": DEVICE, "device_map": DEVICE_MAP}
 
+@app.get("/v1/internal/unload")
+def manual_unload():
+    """Manually unload all models."""
+    manager.unload_all()
+    return {"status": "models unloaded"}
+
 @app.get("/v1/models")
 def list_models():
     """List available models."""

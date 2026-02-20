@@ -1145,7 +1145,7 @@ def create_app() -> FastAPI:
             "handler3": time.time(),
             "llm_handler": time.time()
         }
-        app.state.idle_timeout = 600.0  # 10 minutes
+        app.state.idle_timeout = 60.0  # 60 seconds (aggressive unload for multi-model usage)
 
         app.state.temp_audio_dir = os.path.join(tmp_root, "api_audio")
         os.makedirs(app.state.temp_audio_dir, exist_ok=True)
@@ -2341,6 +2341,54 @@ def create_app() -> FastAPI:
             "service": "ACE-Step API",
             "version": "1.0",
         })
+
+    @app.get("/v1/internal/unload")
+    async def manual_unload(_: None = Depends(verify_api_key)):
+        """Manually unload all models to free VRAM."""
+        print("[Manual Unload] Unloading all models...")
+        
+        # Unload Handler 1
+        async with app.state._init_lock:
+            if app.state._initialized:
+                try:
+                    app.state.handler.unload()
+                except Exception as e:
+                    print(f"Error unloading hander 1: {e}")
+                app.state._initialized = False
+        
+        # Unload Handler 2
+        if getattr(app.state, "_initialized2", False):
+            async with app.state._init_lock2:
+                 if app.state._initialized2:
+                    try:
+                        app.state.handler2.unload()
+                    except Exception as e:
+                        print(f"Error unloading hander 2: {e}")
+                    app.state._initialized2 = False
+
+        # Unload Handler 3
+        if getattr(app.state, "_initialized3", False):
+            async with app.state._init_lock3:
+                 if app.state._initialized3:
+                    try:
+                        app.state.handler3.unload()
+                    except Exception as e:
+                        print(f"Error unloading hander 3: {e}")
+                    app.state._initialized3 = False
+
+        # Unload LLM
+        async with app.state._llm_init_lock:
+            if app.state._llm_initialized:
+                try:
+                    app.state.llm_handler.unload()
+                except Exception as e:
+                    print(f"Error unloading LLM: {e}")
+                app.state._llm_initialized = False
+        
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+        return _wrap_response({"status": "models unloaded"})
 
     @app.get("/v1/stats")
     async def get_stats(_: None = Depends(verify_api_key)):

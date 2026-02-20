@@ -15,7 +15,7 @@ This skill provides the API specification for the GLM-Image Vision server. Agent
 > [!IMPORTANT]
 > **Lazy Loading**: The model loads on the first image request (not at startup). The first generation takes **2–5 minutes** (model load + inference). Subsequent requests are much faster (~30–60s).
 > **Timeouts**: Set HTTP timeout to at least **600 seconds** (10 minutes).
-> **VRAM**: Uses CPU offload on GPUs with <80GB VRAM (slower but works).
+> **VRAM**: Optimized for **Multi-GPU**. CPU offload disabled for maximum speed.
 
 ## Pre-flight Check
 
