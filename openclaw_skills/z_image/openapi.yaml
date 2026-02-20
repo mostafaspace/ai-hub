@@ -1,11 +1,11 @@
 openapi: 3.0.0
 info:
-  title: GLM-Image Vision API
-  description: API for generating images using the GLM-Image model via local server.
+  title: Z-Image Vision API
+  description: API for generating images using the Z-Image model via local server.
   version: 2.0.0
 servers:
   - url: http://192.168.1.26:8003
-    description: Local GLM-Image Vision Server
+    description: Local Z-Image Vision Server
 
 paths:
   /v1/images/generations:
@@ -43,7 +43,15 @@ paths:
                 guidance_scale:
                   type: number
                   description: Classifier-free guidance scale.
-                  default: 1.5
+                  default: 4.0
+                cfg_normalization:
+                  type: boolean
+                  description: Apply CFG normalization. False for stylism, True for realism.
+                  default: false
+                negative_prompt:
+                  type: string
+                  description: Text instruction for what to avoid generating.
+                  default: ""
               required:
                 - prompt
       responses:

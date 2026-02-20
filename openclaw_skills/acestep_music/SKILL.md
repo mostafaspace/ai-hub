@@ -108,12 +108,5 @@ Using the `file` path from the polling result (e.g., `/v1/audio?path=...`), cons
 4.  **Get URL**: Parse `data[0].result` (JSON string) to find the `file` path.
 5.  **Download**: Send **GET** to `http://192.168.1.26:8001{file_path}` and save the file.
 
-## Troubleshooting
-
 ### Generation Stuck on "Processing"
 -   **Wait Longer**: Complex prompts or high loads can take up to 2 minutes.
--   **Contact Admin**: If it fails consistently, the service might be down.
-
-### Connection Refused
--   **Check IP**: Ensure the server IP is reachable.
--   **Firewall**: Ensure port `8001` is allowed.

@@ -43,8 +43,8 @@ TTS_MODEL_BASE = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
 # Qwen3 ASR Model
 ASR_MODEL_PATH = "Qwen/Qwen2-Audio-7B-Instruct"
 
-# GLM-Image Vision Model
-VISION_MODEL = "zai-org/GLM-Image"
+# Z-Image Vision Model
+VISION_MODEL = "Tongyi-MAI/Z-Image"
 VISION_OFFLOAD_CPU = False  # Disabled: 2 GPUs (5090 32GB + 4070Ti 12GB) can hold the full model
 
 # --- Device Configuration ---

@@ -1,7 +1,7 @@
 """
-Antigravity AI - Vision Service (GLM-Image)
+Antigravity AI - Vision Service (Z-Image)
 
-Serves GLM-Image (zai-org/GLM-Image) as an OpenAI-compatible image generation API.
+Serves Z-Image (Tongyi-MAI/Z-Image) as an OpenAI-compatible image generation API.
 Supports text-to-image (/v1/images/generations).
 """
 
@@ -51,7 +51,7 @@ OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "generated_images")
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("Vision-Service")
+logger = logging.getLogger("Z-Image")
 
 # --- Global State ---
 pipeline = None
@@ -63,7 +63,7 @@ def unload_model():
     """Unload the model to free VRAM."""
     global pipeline
     if pipeline is not None:
-        logger.info("Unloading GLM-Image model to free VRAM...")
+        logger.info("Unloading Z-Image model to free VRAM...")
         del pipeline
         pipeline = None
         import gc
@@ -76,7 +76,7 @@ def load_model():
     """Load the GLM-Image pipeline with Sequential CPU Offloading."""
     global pipeline
     if pipeline is None:
-        logger.info(f"Loading GLM-Image model (Sequential Offload): {MODEL_ID}...")
+        logger.info(f"Loading Z-Image model (Sequential Offload): {MODEL_ID}...")
         
         import gc
         gc.collect()
@@ -84,7 +84,7 @@ def load_model():
             torch.cuda.empty_cache()
 
         try:
-            from diffusers.pipelines.glm_image import GlmImagePipeline
+            from diffusers import ZImagePipeline
 
             # Load strictly in bfloat16 to avoid black images (VAE overflow) and bitsandbytes bugs.
             # We use sequential_cpu_offload to handle the 31GB footprint.
@@ -96,11 +96,11 @@ def load_model():
 
             # Load Pipeline (device_map=None because we use enable_sequential_cpu_offload)
             try:
-                pipeline = GlmImagePipeline.from_pretrained(MODEL_ID, **load_args)
+                pipeline = ZImagePipeline.from_pretrained(MODEL_ID, **load_args)
             except Exception as e:
                 logger.warning(f"Initial load failed ({e}), trying local only...")
                 load_args["local_files_only"] = True
-                pipeline = GlmImagePipeline.from_pretrained(MODEL_ID, **load_args)
+                pipeline = ZImagePipeline.from_pretrained(MODEL_ID, **load_args)
 
             # High-Stability Memory Management
             try:
@@ -125,10 +125,10 @@ def load_model():
             pipeline.__call__ = patched_call
             logger.info("Universal Device Context patch applied.")
 
-            logger.info("GLM-Image loaded successfully (Sequential Offload).")
+            logger.info("Z-Image loaded successfully (Sequential Offload).")
 
         except Exception as e:
-            logger.error(f"Failed to load GLM-Image: {e}")
+            logger.error(f"Failed to load Z-Image: {e}")
             logger.error(traceback.format_exc())
             pipeline = None
             raise HTTPException(status_code=500, detail=str(e))
@@ -175,11 +175,13 @@ def save_image(img: Image.Image) -> str:
 # --- API Models ---
 class ImageGenerationRequest(BaseModel):
     prompt: str
+    negative_prompt: str = ""
     n: int = 1
     size: str = "1024x1024"
     response_format: str = "url"
     num_inference_steps: int = 50
-    guidance_scale: float = 1.5
+    guidance_scale: float = 4.0
+    cfg_normalization: bool = False
 
 # --- FastAPI App ---
 @asynccontextmanager
@@ -224,10 +226,12 @@ async def generate_image(request: ImageGenerationRequest):
         with torch.inference_mode():
             images = pipeline(
                 prompt=request.prompt,
+                negative_prompt=request.negative_prompt,
                 width=width,
                 height=height,
                 num_inference_steps=request.num_inference_steps,
                 guidance_scale=request.guidance_scale,
+                cfg_normalization=request.cfg_normalization,
                 num_images_per_prompt=request.n
             ).images
 

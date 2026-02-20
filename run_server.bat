@@ -19,7 +19,7 @@ echo.
 echo   [1] Qwen3 TTS Server         (Port 8000) - Text-to-Speech
 echo   [2] ACE-Step Music Server    (Port 8001) - Music Generation
 echo   [3] Qwen3 ASR Server         (Port 8002) - Speech-to-Text
-echo   [4] Vision Service           (Port 8003) - GLM-Image Generation
+echo   [4] Vision Service           (Port 8003) - Z-Image Generation
 echo.
 echo   [A] Start ALL Servers (with auto-restart)
 echo   [U] Unified Server (All in one window)
@@ -107,7 +107,7 @@ goto MENU
 call :KILL_PORT 8003
 echo.
 echo Starting Vision Service on port 8003...
-start "Vision Service" cmd /k "cd /d %~dp0Vision-Service && set HF_HOME=D:\hf_models && python vision_server.py"
+start "Vision Service" cmd /k "cd /d %~dp0Z-Image && set HF_HOME=D:\hf_models && python vision_server.py"
 echo Vision Service starting in new window!
 pause
 goto MENU
@@ -143,7 +143,7 @@ start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_model
 timeout /t 3 >nul
 
 echo [4/4] Starting Vision Service (port 8003)...
-start "Vision Service" cmd /k "cd /d %~dp0Vision-Service && set HF_HOME=D:\hf_models && python vision_server.py"
+start "Vision Service" cmd /k "cd /d %~dp0Z-Image && set HF_HOME=D:\hf_models && python vision_server.py"
 
 echo.
 echo ============================================================

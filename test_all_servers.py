@@ -30,6 +30,7 @@ SERVERS = [
     {"name": "Qwen3 TTS", "port": config.TTS_PORT, "health": "/health", "url": f"http://{DEVICE_IP}:{config.TTS_PORT}"},
     {"name": "ACE-Step Music", "port": config.MUSIC_PORT, "health": "/health", "url": f"http://{DEVICE_IP}:{config.MUSIC_PORT}"},
     {"name": "Qwen3 ASR", "port": config.ASR_PORT, "health": "/health", "url": f"http://{DEVICE_IP}:{config.ASR_PORT}"},
+    {"name": "Vision (Z-Image)", "port": config.VISION_PORT, "health": "/health", "url": f"http://{DEVICE_IP}:{config.VISION_PORT}"},
 ]
 
 
@@ -155,6 +156,38 @@ def test_asr_server():
         return False
 
 
+def test_vision_server():
+    """Test the Vision service with a quick text-to-image request."""
+    print(f"\n[TEST] Testing Vision Service (Z-Image) at {DEVICE_IP}...")
+    try:
+        response = requests.post(
+            f"http://{DEVICE_IP}:{config.VISION_PORT}/v1/images/generations",
+            json={
+                "prompt": "a simple red circle on white background",
+                "negative_prompt": "blurry",
+                "size": "512x512",
+                "num_inference_steps": 20,
+                "guidance_scale": 4.0,
+                "cfg_normalization": False,
+            },
+            timeout=600
+        )
+        if response.status_code == 200:
+            data = response.json()
+            print(f"  [OK] Vision generation successful!")
+            if "data" in data and len(data["data"]) > 0:
+                item = data["data"][0]
+                if "url" in item:
+                    print(f"  Image URL: {item['url']}")
+            return True
+        else:
+            print(f"  [ERROR] Vision failed: {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"  [ERROR] Vision test failed: {e}")
+        return False
+
+
 def main():
     print("=" * 60)
     print("      ANTIGRAVITY AI - Server Health Check")
@@ -184,6 +217,9 @@ def main():
     # Test ASR
     asr_ok = test_asr_server()
     
+    # Test Vision
+    vision_ok = test_vision_server()
+    
     # Summary
     print("\n" + "=" * 60)
     print("      Test Summary")
@@ -191,9 +227,10 @@ def main():
     print(f"  Qwen3 TTS:    {'[OK]' if tts_ok else '[FAILED/OFFLINE]'}")
     print(f"  ACE-Step:     {'[OK]' if acestep_ok else '[FAILED/OFFLINE]'}")
     print(f"  Qwen3 ASR:    {'[OK]' if asr_ok else '[FAILED/OFFLINE]'}")
+    print(f"  Vision:       {'[OK]' if vision_ok else '[FAILED/OFFLINE]'}")
     print("=" * 60)
     
-    return tts_ok and acestep_ok and asr_ok
+    return tts_ok and acestep_ok and asr_ok and vision_ok
 
 
 if __name__ == "__main__":

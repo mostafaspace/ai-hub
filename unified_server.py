@@ -87,7 +87,7 @@ SERVERS = [
     },
     {
         "name": "VISION",
-        "cwd": "Vision-Service",
+        "cwd": "Z-Image",
         "cmd": ["python", "vision_server.py"],
         "color": "\033[92m",  # Green
     },

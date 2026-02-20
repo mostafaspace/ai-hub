@@ -98,9 +98,5 @@ To generate speech with a custom designed voice:
 3.  Receive the binary audio stream (content-type: `audio/mpeg` or `audio/wav`).
 4.  Save the stream to a file.
 
-## Troubleshooting
-
-### Connection Refused / Timeout
--   **Check IP**: Ensure `192.168.1.26` is reachable from the agent's machine. Try `ping 192.168.1.26`.
--   **Firewall**: Ensure port `8000` is open on the server machine.
--   **First Request Slow**: The server loads models on demand. The first request can take 1-2 minutes.
+### Timeout
+-   **First Request Slow**: The API loads models on demand. The first request can take 1-2 minutes.

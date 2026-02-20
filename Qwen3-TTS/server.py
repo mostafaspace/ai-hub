@@ -141,12 +141,20 @@ class ModelManager:
                 # FORCE a single GPU to avoid cross-device tensor errors.
                 device_arg = DEVICE_MAP if DEVICE == "cuda" else "cpu"
                 
-                self.models[model_type] = Qwen3TTSModel.from_pretrained(
+                model_instance = Qwen3TTSModel.from_pretrained(
                     path,
                     device_map=device_arg,
                     dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
                     # attn_implementation="flash_attention_2" # Enable if supported hardware
                 )
+                if hasattr(model_instance, 'config'):
+                    # Some configs strictly raise AttributeError if missing instead of returning None
+                    try:
+                        _ = model_instance.config.pad_token_id
+                    except AttributeError:
+                        model_instance.config.pad_token_id = getattr(model_instance.config, 'eos_token_id', 0)
+
+                self.models[model_type] = model_instance
                 self.current_model_type = model_type
                 
             return self.models[model_type]

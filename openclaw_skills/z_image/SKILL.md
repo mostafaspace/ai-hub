@@ -1,11 +1,11 @@
 ---
-name: glm_image
-description: API documentation for the GLM-Image Vision server, enabling text-to-image and image-to-image generation.
+name: z_image
+description: API documentation for the Z-Image Vision server, enabling text-to-image pipelines.
 ---
 
-# GLM-Image Vision API Skill
+# Z-Image Vision API Skill
 
-This skill provides the API specification for the GLM-Image Vision server. Agents can use this information to construct HTTP requests to generate or edit images.
+This skill provides the API specification for the Z-Image Vision server. Agents can use this information to construct HTTP requests to generate images.
 
 ## Server Details
 
@@ -19,9 +19,8 @@ This skill provides the API specification for the GLM-Image Vision server. Agent
 
 ## Pre-flight Check
 
-Before generating images, **always call `GET /health` first**:
-- If the server is unreachable, inform the user the Vision server needs to be started.
-- If `model_loaded` is `false`, warn the user the first request will take several minutes for model loading.
+Before generating images, call `GET /health` to verify model status.
+- If `model_loaded` is `false`, expect the first request to take several minutes to compile.
 
 ## Capabilities
 
@@ -39,18 +38,22 @@ Generates an image from a text prompt (OpenAI-compatible).
 ```json
 {
   "prompt": "A beautiful sunset over a mountain lake, photorealistic",
+  "negative_prompt": "blurry, low quality",
   "size": "1024x1024",
   "n": 1,
   "response_format": "b64_json",
   "num_inference_steps": 50,
-  "guidance_scale": 1.5
+  "guidance_scale": 4.0,
+  "cfg_normalization": false
 }
 ```
 -   `prompt`: Text description of the image to generate. Enclose text to render in quotation marks.
 -   `size`: `WIDTHxHEIGHT` — dimensions must be divisible by 32.
 -   `response_format`: `b64_json` (recommended — returns base64-encoded PNG inline) or `url` (returns a download URL).
 -   `num_inference_steps`: Higher = better quality, slower. Default: 50.
--   `guidance_scale`: Recommended: 1.5.
+-   `guidance_scale`: Recommended: 4.0.
+-   `cfg_normalization`: Set to False for standard generation.
+-   `negative_prompt`: Things to avoid in the generation.
 
 **Response:**
 ```json
@@ -99,7 +102,7 @@ Forces the model to unload from VRAM immediately. Both HTTP methods are supporte
 
 To generate an image:
 
-1.  **Pre-flight**: Send **GET** to `http://192.168.1.26:8003/health`. If unreachable, ask the user to start the Vision server.
+1.  **Pre-flight**: Send **GET** to `http://192.168.1.26:8003/health` to check if the model is currently loaded.
 2.  Construct the JSON payload with `prompt` and desired `size`.
 3.  Send a **POST** request to `http://192.168.1.26:8003/v1/images/generations` with **timeout=600**.
 4.  Parse the response JSON to get the image `b64_json` or `url`.
@@ -107,15 +110,14 @@ To generate an image:
 
 ## Error Handling
 
--   **500 (Model loading failed)**: The model failed to load. This is retryable — wait 10 seconds and try again. The server will retry model loading on the next request.
--   **Connection refused**: The Vision server is not running. Ask the user to start it via `run_server.bat`.
+-   **500 (Model loading failed)**: The model failed to load. Wait 10 seconds and try again. The API will retry model loading on the next request.
 -   **Timeout**: Normal for first request. The model (~32GB) takes 2–5 minutes to load on first use.
 
 ## Troubleshooting
 
 ### Timeout / Slow Response
--   **Normal**: GLM-Image generation takes 2-10 minutes per image. Set timeout to 600s+.
--   **First run**: Model download (~32GB) can take 30-60 minutes.
+-   **Normal**: Z-Image generation takes 1-5 minutes per image. Set timeout to 600s+.
+-   **First run**: Model download (~16GB) can take 30-60 minutes.
 
 ### Out of Memory
 -   CPU offload is enabled by default. If still OOM, try reducing image size (e.g., `512x512`).

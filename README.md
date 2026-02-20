@@ -26,9 +26,9 @@ Automatic Speech Recognition and Audio Intelligence.
 - **Primary Endpoint**: `http://<device-ip>:8002/v1/audio/transcriptions`
 - **Features**: Speech-to-Text transcription and Audio Analysis/Chat using Qwen2-Audio-7B.
 
-### 🖼️ Vision Service (GLM-Image)
-High-fidelity image generation powered by the GLM-Image hybrid autoregressive + diffusion model.
-- **Path**: [`/Vision-Service`](./Vision-Service)
+### 🖼️ Vision Service (Z-Image)
+High-fidelity photorealistic and bilingual image generation powered by the Tongyi-MAI Z-Image 6B diffusion transformer.
+- **Path**: [`/Z-Image`](./Z-Image)
 - **Primary Endpoint**: `http://<device-ip>:8003/v1/images/generations`
 - **Features**: Text-to-image generation, image-to-image editing, OpenAI-compatible API, base64 and URL response formats.
 
@@ -43,11 +43,11 @@ AI-Hub runs powerful generative models locally. Below are the estimated VRAM req
 | **Qwen3 TTS** | 1.7B Custom/Design/Base | float16 | ~4-6 GB |
 | **ACE-Step Music** | 1.5 Turbo (DiT + 1.7B LM) | float16 | ~8-12 GB* |
 | **Qwen3 ASR** | Qwen2-Audio-7B | float16 | ~16-18 GB |
-| **Vision (GLM-Image)** | 9B AR + 7B Decoder | bfloat16 | ~80 GB** |
+| **Vision (Z-Image)** | 6B DiT | bfloat16 | ~16 GB** |
 
 > [!NOTE]
 > **ACE-Step Music** scales with available VRAM. It can run in "DiT-only" mode on as little as **4GB VRAM**, or use larger Language Models (up to 4B) if 16GB+ is available.
-> **GLM-Image** uses CPU offload by default, allowing it to run on GPUs with less than 80GB at the cost of slower inference.
+> **Z-Image** uses CPU offload by default, allowing it to comfortably fit on 16GB-32GB consumer GPUs with high quality `bfloat16` generation.
 
 ### 🧠 Smart VRAM Management (Auto-Unload)
 To support running multiple heavy models on consumer hardware (e.g., RTX 3090/4090), AI-Hub implements **Automatic Model Unloading**:
@@ -58,7 +58,7 @@ To support running multiple heavy models on consumer hardware (e.g., RTX 3090/40
 ### Overall Recommendation
 - **Minimum**: 8GB VRAM (Supports TTS and Music comfortably).
 - **Recommended**: 24GB VRAM (Supports TTS, Music, and ASR simultaneously).
-- **Vision**: 80GB+ VRAM for GLM-Image, or use CPU offload on smaller GPUs.
+- **Vision**: ~16GB VRAM for Z-Image with CPU offload enabled.
 - **Storage**: ~100GB+ for model weights (stored in `D:\hf_models` by default).
 
 ---
@@ -106,7 +106,7 @@ AI-Hub is a living project with significant expansions planned. We are committed
 
 | Feature | Description | Status |
 | :--- | :--- | :--- |
-| **Vision API** | Image generation with GLM-Image (text-to-image & image-to-image). | ✅ Done |
+| **Vision API** | Image generation with Z-Image (text-to-image). | ✅ Done |
 | **Omni-Chat** | Unified chat interface for LLM interactions. | 📅 Planned |
 | **Agent Workspace** | Infrastructure for autonomous AI agents. | 💡 Researching |
 | **Unified UI** | A single dashboard to monitor and interact with all hub services. | 🛤️ On Roadmap |
@@ -120,7 +120,7 @@ ai-hub/
 ├── ACE-Step-1.5/      # Music generation service (Port 8001)
 ├── Qwen3-TTS/         # Text-to-speech service (Port 8000)
 ├── Qwen3-ASR/         # Speech-to-text service (Port 8002)
-├── Vision-Service/    # Image generation service (Port 8003)
+├── Z-Image/           # Image generation service (Port 8003)
 ├── openclaw_skills/   # Extensible skills for AI agents
 ├── run_server.bat     # Centralized launcher menu
 ├── unified_server.py  # Unified All-in-One process manager
