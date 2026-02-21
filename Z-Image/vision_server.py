@@ -24,7 +24,7 @@ import base64
 from uuid import uuid4
 from typing import Optional, List
 from PIL import Image
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
@@ -229,6 +229,70 @@ async def internal_status():
         "model_loaded": pipeline is not None
     }
 
+generation_tasks = {}
+
+def process_async_task(task_id: str, request: ImageGenerationRequest):
+    global last_activity_time, is_generating
+    last_activity_time = time.time()
+    is_generating = True
+    
+    try:
+        load_model()
+        width, height = parse_size(request.size)
+        width, height = validate_and_round_size(width, height)
+        
+        logger.info(f"[Task {task_id}] Generating image (Sequential Offload): '{request.prompt[:50]}...'")
+        with torch.inference_mode():
+            images = pipeline(
+                prompt=request.prompt,
+                negative_prompt=request.negative_prompt,
+                width=width,
+                height=height,
+                num_inference_steps=request.num_inference_steps,
+                guidance_scale=request.guidance_scale,
+                cfg_normalization=request.cfg_normalization,
+                num_images_per_prompt=request.n
+            ).images
+
+        img = images[0]
+        
+        if request.response_format == "b64_json":
+            result_data = {"b64_json": image_to_base64(img)}
+        else:
+            filename = save_image(img)
+            url = f"http://{config.PUBLIC_HOST}:{PORT}/outputs/{filename}"
+            result_data = {"url": url}
+            
+        generation_tasks[task_id] = {"status": "completed", "data": [result_data]}
+        logger.info(f"[Task {task_id}] Completed successfully.")
+        
+    except Exception as e:
+        logger.error(f"[Task {task_id}] Generation error: {e}")
+        logger.error(traceback.format_exc())
+        generation_tasks[task_id] = {"status": "failed", "error": str(e)}
+    finally:
+        is_generating = False
+
+@app.post("/v1/images/async_generate")
+def async_generate(request: ImageGenerationRequest, background_tasks: BackgroundTasks):
+    """
+    Agent-proof endpoint: Returns immediately, runs generation in the background.
+    """
+    task_id = str(uuid4().hex)
+    generation_tasks[task_id] = {"status": "processing"}
+    background_tasks.add_task(process_async_task, task_id, request)
+    return {"task_id": task_id, "status": "processing", "message": "Task queued. Poll GET /v1/images/tasks/{task_id}"}
+
+@app.get("/v1/images/tasks/{task_id}")
+def get_task_status(task_id: str):
+    """
+    Poll this endpoint for generation status.
+    """
+    if task_id not in generation_tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return generation_tasks[task_id]
+
+# --- LEGACY OPENAI SYNC ENDPOINT ---
 @app.get("/v1/images/generations")
 async def get_generations_status():
     return {
@@ -238,7 +302,7 @@ async def get_generations_status():
     }
 
 @app.post("/v1/images/generations")
-def generate_image(request: ImageGenerationRequest):
+def generate_image_sync(request: ImageGenerationRequest):
     global last_activity_time, is_generating
     last_activity_time = time.time()
     
@@ -249,7 +313,7 @@ def generate_image(request: ImageGenerationRequest):
     width, height = validate_and_round_size(width, height)
     
     try:
-        logger.info(f"Generating image (Sequential Offload): '{request.prompt[:50]}...'")
+        logger.info(f"Generating image (Sync): '{request.prompt[:50]}...'")
         with torch.inference_mode():
             images = pipeline(
                 prompt=request.prompt,
@@ -268,7 +332,6 @@ def generate_image(request: ImageGenerationRequest):
                 data.append({"b64_json": image_to_base64(img)})
             else:
                 filename = save_image(img)
-                # Use PUBLIC_HOST so external agents can download the image instead of 0.0.0.0
                 url = f"http://{config.PUBLIC_HOST}:{PORT}/outputs/{filename}"
                 data.append({"url": url})
         

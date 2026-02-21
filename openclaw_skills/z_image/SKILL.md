@@ -1,125 +1,74 @@
 ---
 name: z_image
-description: API documentation for the Z-Image Vision server, enabling text-to-image pipelines.
+description: Z-Image Vision Generator - Generate images from text prompts using an async polling queue.
 ---
 
 # Z-Image Vision API Skill
 
-This skill provides the API specification for the Z-Image Vision server. Agents can use this information to construct HTTP requests to generate images.
+This API uses a background task queue. Generating images takes a few minutes, so you MUST use this 2-step polling process. DO NOT use the synchronous generation endpoints.
 
 ## Server Details
 
 -   **Base URL**: `http://192.168.1.26:8003`
--   **OpenAPI Spec**: `openapi.yaml` (in this directory)
 
-> [!IMPORTANT]
-> **Lazy Loading**: The model loads on the first image request (not at startup). The first generation takes **2–5 minutes** (model load + inference). Subsequent requests are much faster (~30–60s).
-> **Timeouts**: Set HTTP timeout to at least **600 seconds** (10 minutes).
-> **VRAM**: Optimized for **Multi-GPU**. CPU offload disabled for maximum speed.
+## 2-Step Agent Workflow
 
-## Pre-flight & Progress Checking
+### Step 1: Start Translation Task
+Send a simple POST request to queue the prompt.
 
-- **Pre-flight:** Call `GET /health` or `GET /v1/internal/status` to check if the model is alive. 
-- **Progress Polling:** The `POST /v1/images/generations` request is strictly **synchronous**. It holds the connection open until the image finishes. 
-    - *However*, you can run a parallel thread to poll `GET /v1/internal/status`. It will return `{"status": "generating"}` while the server is busy.
-    - Do **NOT** assume the POST request failed just because it takes a long time. Set your timeout to `600s` and WAIT for the JSON response.
-
-## Capabilities
-
-1.  **Text-to-Image**: Generate high-fidelity images from text prompts.
-2.  **Image-to-Image**: Edit, style-transfer, or transform existing images with text guidance.
-
-## API Endpoints
-
-### 1. Generate Image (Text-to-Image)
-**POST** `/v1/images/generations`
-
-Generates an image from a text prompt (OpenAI-compatible).
+**POST** `/v1/images/async_generate`
 
 **JSON Body:**
 ```json
 {
-  "prompt": "A beautiful sunset over a mountain lake, photorealistic",
-  "negative_prompt": "blurry, low quality",
-  "size": "1024x1024",
-  "n": 1,
-  "response_format": "b64_json",
-  "num_inference_steps": 50,
-  "guidance_scale": 4.0,
-  "cfg_normalization": false
+  "prompt": "A happy cat sitting on a rug, highly detailed, photorealistic"
 }
 ```
--   `prompt`: Text description of the image to generate. Enclose text to render in quotation marks.
--   `size`: `WIDTHxHEIGHT` — dimensions must be divisible by 32.
--   `response_format`: `b64_json` (recommended — returns base64-encoded PNG inline) or `url` (returns a download URL).
--   `num_inference_steps`: Higher = better quality, slower. Default: 50.
--   `guidance_scale`: Recommended: 4.0.
--   `cfg_normalization`: Set to False for standard generation.
--   `negative_prompt`: Things to avoid in the generation.
 
 **Response:**
 ```json
 {
-  "created": 1234567890,
-  "data": [
-    {
-      "b64_json": "<base64-encoded PNG data>",
-      "revised_prompt": "A beautiful sunset..."
-    }
-  ]
+  "task_id": "8b9cad0e1f20",
+  "status": "processing"
 }
 ```
 
-### 2. Edit Image (Image-to-Image)
-**POST** `/v1/images/edits`
+### Step 2: Poll for Result 
+Wait 5 seconds, then repeatedly call this endpoint using the `task_id` you received above until the status is `completed`.
 
-**Content-Type**: `multipart/form-data`
+**GET** `/v1/images/tasks/{task_id}`
 
-Edits or transforms an input image based on a text prompt.
+**Response while rendering:**
+```json
+{
+  "status": "processing"
+}
+```
 
-**Fields:**
--   `image`: The input image file (PNG/JPG).
--   `prompt`: Text instruction for how to modify the image.
--   `size`: Output size (`WIDTHxHEIGHT`). Defaults to input image size.
--   `response_format`: `url` (default) or `b64_json`.
--   `num_inference_steps`: Default 50.
--   `guidance_scale`: Default 1.5.
+**Final Response (when done):**
+```json
+{
+  "status": "completed",
+  "data": [
+      {
+          "url": "http://192.168.1.26:8003/outputs/gen_...png"
+      }
+  ]
+}
+```
+Once you get `"status": "completed"`, you have successfully generated the image! Read the `url` from the `data` array and provide it to the user.
 
-### 3. Health Check
-**GET** `/health`
+## Delivering as a WhatsApp Image (File Attachment)
+If you need to send the actual image file to a user (e.g., via a WhatsApp messaging node) instead of the local HTTP link, you have two options to get the file data:
 
-Returns server status and whether the model is currently loaded.
+**Option 1: Download the File Bytes (Easiest)**
+Using the `url` returned in Step 2, simply make a standard HTTP `GET` request to it (e.g., `http://192.168.1.26:8003/outputs/gen_...png`). The response body will be the raw `image/png` binary file. Save it to a local temporary file and attach it to your message.
 
-### 4. List Models
-**GET** `/v1/models`
+**Option 2: Request Base64 JSON**
+If your tool natively accepts Base64 strings, you can add `"response_format": "b64_json"` to your initial `POST` payload in Step 1. The final polled result will contain a `b64_json` field with the Base64-encoded PNG string instead of a `url`.
 
-Returns model metadata and supported capabilities.
+## Pre-flight & Health
 
-### 5. Manual Unload
-**POST** or **GET** `/v1/internal/unload`
-
-Forces the model to unload from VRAM immediately. Both HTTP methods are supported.
-
-## Example Workflow (Agent)
-
-To generate an image:
-
-1.  **Pre-flight**: Send **GET** to `http://192.168.1.26:8003/health` to check if the model is currently loaded.
-2.  Construct the JSON payload with `prompt` and desired `size`.
-3.  Send a **POST** request to `http://192.168.1.26:8003/v1/images/generations` with **timeout=600**.
-4.  Parse the response JSON to get the image `b64_json` or `url`.
-5.  If using `url`, download the image from the returned URL.
-
-## Error Handling
-
--   **500 (Model loading failed)**: The model failed to load. Wait 10 seconds and try again. The API will retry model loading on the next request.
--   **Timeout**: Normal for first request. The model (~32GB) takes 2–5 minutes to load on first use.
-
-## Troubleshooting
-
-### Timeout / Slow Response
--   **Normal**: Z-Image generation takes 1-5 minutes per image. Set timeout to 600s+.
--   **First run**: Model download (~16GB) can take 30-60 minutes.
-
-### Out of Memory
--   CPU offload is enabled by default. If still OOM, try reducing image size (e.g., `512x512`).
+If you want to check if the server is online before starting:
+- **GET** `/health`
+- Returns `{"status": "ok"}` if the server is reachable.
