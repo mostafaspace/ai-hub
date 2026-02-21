@@ -25,10 +25,9 @@ from uuid import uuid4
 from typing import Optional, List
 from PIL import Image
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
-from fastapi.staticfiles import StaticFiles
 
 # --- NUCLEAR OPTION: Default Device ---
 try:
@@ -57,6 +56,7 @@ logger = logging.getLogger("Z-Image")
 pipeline = None
 last_activity_time = time.time()
 server_shutdown_event = asyncio.Event()
+is_generating = False
 
 # --- Model Management ---
 def unload_model():
@@ -193,7 +193,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Antigravity Vision Service", lifespan=lifespan)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
+
+@app.get("/outputs/{filename}")
+async def get_output_file(filename: str):
+    # Prevent directory traversal
+    filepath = os.path.abspath(os.path.join(OUTPUT_DIR, filename))
+    if not filepath.startswith(os.path.abspath(OUTPUT_DIR)):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    # Gracefully catch invalid Windows characters (WinError 123)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(filepath)
 
 @app.get("/health")
 async def health():
@@ -212,10 +222,27 @@ async def list_models():
         }]
     }
 
+@app.get("/v1/internal/status")
+async def internal_status():
+    return {
+        "status": "generating" if is_generating else "idle",
+        "model_loaded": pipeline is not None
+    }
+
+@app.get("/v1/images/generations")
+async def get_generations_status():
+    return {
+        "error": "Method not allowed. Use POST to generate.",
+        "hint": "If you are checking status, the server is currently " + ("GENERATING" if is_generating else "IDLE"),
+        "is_generating": is_generating
+    }
+
 @app.post("/v1/images/generations")
-async def generate_image(request: ImageGenerationRequest):
-    global last_activity_time
+def generate_image(request: ImageGenerationRequest):
+    global last_activity_time, is_generating
     last_activity_time = time.time()
+    
+    is_generating = True
     
     load_model()
     width, height = parse_size(request.size)
@@ -251,6 +278,8 @@ async def generate_image(request: ImageGenerationRequest):
         logger.error(f"Generation error: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        is_generating = False
 
 if __name__ == "__main__":
     logger.info(f"Vision Service starting (Sequential Offload) on {HOST}:{PORT}")

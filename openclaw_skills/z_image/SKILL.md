@@ -17,10 +17,12 @@ This skill provides the API specification for the Z-Image Vision server. Agents 
 > **Timeouts**: Set HTTP timeout to at least **600 seconds** (10 minutes).
 > **VRAM**: Optimized for **Multi-GPU**. CPU offload disabled for maximum speed.
 
-## Pre-flight Check
+## Pre-flight & Progress Checking
 
-Before generating images, call `GET /health` to verify model status.
-- If `model_loaded` is `false`, expect the first request to take several minutes to compile.
+- **Pre-flight:** Call `GET /health` or `GET /v1/internal/status` to check if the model is alive. 
+- **Progress Polling:** The `POST /v1/images/generations` request is strictly **synchronous**. It holds the connection open until the image finishes. 
+    - *However*, you can run a parallel thread to poll `GET /v1/internal/status`. It will return `{"status": "generating"}` while the server is busy.
+    - Do **NOT** assume the POST request failed just because it takes a long time. Set your timeout to `600s` and WAIT for the JSON response.
 
 ## Capabilities
 
