@@ -447,7 +447,10 @@ def get_task_status(task_id: str):
     Poll this endpoint for generation status.
     """
     if task_id not in generation_tasks:
-        raise HTTPException(status_code=404, detail="Task not found")
+        return {
+            "status": "failed", 
+            "error": "Task not found (server may have restarted or ID is invalid). Please submit a new request."
+        }
     return generation_tasks[task_id]
 
 # --- LEGACY OPENAI SYNC ENDPOINT ---
