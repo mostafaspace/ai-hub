@@ -1,4 +1,4 @@
-import socket
+﻿import socket
 import os
 
 def get_local_ip():
@@ -53,3 +53,5 @@ DEVICE_MAP_DEFAULT = "auto"
 
 # Helper to ensure HF_HOME is set in environment
 os.environ["HF_HOME"] = HF_HOME
+VISION_EDIT_MODEL = "Tongyi-MAI/Z-Image-Edit"
+VISION_EDIT_MODEL = "Tongyi-MAI/Z-Image-Edit"

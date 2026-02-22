@@ -28,6 +28,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTa
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
+from diffusers.utils import load_image
 
 # --- NUCLEAR OPTION: Default Device ---
 try:
@@ -37,14 +38,16 @@ try:
 except Exception as e:
     print(f"Warning: Could not set default device to CUDA: {e}")
 
-# Add parent dir for config import
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Add parent dir for config import. Insert at 0 to prevent pip shadowing.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import config
+print(f"DEBUG: Loaded config from {config.__file__}")
 
 # --- Configuration ---
 HOST = config.HOST
 PORT = config.VISION_PORT
-MODEL_ID = config.VISION_MODEL
+T2I_MODEL_ID = config.VISION_MODEL
+EDIT_MODEL_ID = config.VISION_EDIT_MODEL
 CACHE_DIR = config.HF_HOME
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "generated_images")
 
@@ -53,94 +56,164 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("Z-Image")
 
 # --- Global State ---
-pipeline = None
+t2i_pipeline = None
+edit_pipeline = None
 last_activity_time = time.time()
 server_shutdown_event = asyncio.Event()
 is_generating = False
 
 # --- Model Management ---
-def unload_model():
-    """Unload the model to free VRAM."""
-    global pipeline
-    if pipeline is not None:
-        logger.info("Unloading Z-Image model to free VRAM...")
-        del pipeline
-        pipeline = None
-        import gc
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        logger.info("Model unloaded.")
+def apply_device_monkeypatch(pipe):
+    """Applies the universal context patch for sequence offloading"""
+    original_call = pipe.__call__
+    def patched_call(*args, **kwargs):
+        if "generator" in kwargs and kwargs["generator"] is not None:
+            try:
+                kwargs["generator"] = kwargs["generator"].to("cuda")
+            except: pass
+        with torch.device("cuda:0"):
+            return original_call(*args, **kwargs)
+    pipe.__call__ = patched_call
+    return pipe
 
-def load_model():
-    """Load the GLM-Image pipeline with Sequential CPU Offloading."""
-    global pipeline
-    if pipeline is None:
-        logger.info(f"Loading Z-Image model (Sequential Offload): {MODEL_ID}...")
+def _purge_vram():
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+def unload_model():
+    """Unload all models to free VRAM completely."""
+    global t2i_pipeline, edit_pipeline
+    purged = False
+    if t2i_pipeline is not None:
+        logger.info("Unloading Z-Image T2I model...")
+        del t2i_pipeline
+        t2i_pipeline = None
+        purged = True
+    if edit_pipeline is not None:
+        logger.info("Unloading Z-Image Edit model...")
+        del edit_pipeline
+        edit_pipeline = None
+        purged = True
         
-        import gc
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+    if purged:
+        _purge_vram()
+        logger.info("VRAM purged.")
+
+def load_t2i_model():
+    """Load the T2I pipeline (Unloads Edit pipeline if active)."""
+    global t2i_pipeline, edit_pipeline
+    
+    if edit_pipeline is not None:
+        logger.info("Purging Edit pipeline to make room for T2I...")
+        del edit_pipeline
+        edit_pipeline = None
+        _purge_vram()
+        
+    if t2i_pipeline is None:
+        logger.info(f"Loading Z-Image T2I (Sequential Offload): {T2I_MODEL_ID}...")
+        _purge_vram()
 
         try:
             from diffusers import ZImagePipeline
 
-            # Load strictly in bfloat16 to avoid black images (VAE overflow) and bitsandbytes bugs.
-            # We use sequential_cpu_offload to handle the 31GB footprint.
             load_args = {
                 "cache_dir": CACHE_DIR,
                 "torch_dtype": torch.bfloat16,
                 "low_cpu_mem_usage": True,
             }
 
-            # Load Pipeline (device_map=None because we use enable_sequential_cpu_offload)
             try:
-                pipeline = ZImagePipeline.from_pretrained(MODEL_ID, **load_args)
+                t2i_pipeline = ZImagePipeline.from_pretrained(T2I_MODEL_ID, **load_args)
             except Exception as e:
-                logger.warning(f"Initial load failed ({e}), trying local only...")
+                logger.warning(f"Initial T2I load failed ({e}), trying local only...")
                 load_args["local_files_only"] = True
-                pipeline = ZImagePipeline.from_pretrained(MODEL_ID, **load_args)
+                t2i_pipeline = ZImagePipeline.from_pretrained(T2I_MODEL_ID, **load_args)
 
-            # High-Stability Memory Management
             try:
-                # Model offload is faster than sequential and still saves VRAM.
-                pipeline.enable_model_cpu_offload()
-                pipeline.vae.enable_tiling()
-                logger.info("Model CPU offload and VAE tiling enabled.")
+                t2i_pipeline.enable_model_cpu_offload()
+                t2i_pipeline.vae.enable_tiling()
             except Exception as mem_err:
                 logger.warning(f"Could not enable model offload: {mem_err}")
 
-            # --- MONKEYPATCH: Final Device Firewall ---
-            original_call = pipeline.__call__
-            def patched_call(*args, **kwargs):
-                if "generator" in kwargs and kwargs["generator"] is not None:
-                    try:
-                        kwargs["generator"] = kwargs["generator"].to("cuda")
-                    except: pass
-                
-                # With sequential offload, we MUST ensure the context is correctly set
-                with torch.device("cuda:0"):
-                    return original_call(*args, **kwargs)
-            pipeline.__call__ = patched_call
-            logger.info("Universal Device Context patch applied.")
-
-            logger.info("Z-Image loaded successfully (Sequential Offload).")
+            t2i_pipeline = apply_device_monkeypatch(t2i_pipeline)
+            logger.info("Z-Image T2I loaded successfully.")
 
         except Exception as e:
-            logger.error(f"Failed to load Z-Image: {e}")
+            logger.error(f"Failed to load Z-Image T2I: {e}")
             logger.error(traceback.format_exc())
-            pipeline = None
-            raise HTTPException(status_code=500, detail=str(e))
+            t2i_pipeline = None
+            raise HTTPException(status_code=500, detail=f"T2I Load Error: {str(e)}")
+
+def load_edit_model():
+    """Load the Edit pipeline (Unloads T2I pipeline if active)."""
+    global t2i_pipeline, edit_pipeline
+    
+    if t2i_pipeline is not None:
+        logger.info("Purging T2I pipeline to make room for Edit...")
+        del t2i_pipeline
+        t2i_pipeline = None
+        _purge_vram()
+        
+    if edit_pipeline is None:
+        logger.info(f"Loading Z-Image Edit (Sequential Offload): {EDIT_MODEL_ID}...")
+        _purge_vram()
+
+        try:
+            # Note: diffusers might import this differently depending on version. 
+            # Assuming standard structural naming based on ZImagePipeline.
+            from diffusers import ZImagePipeline
+            # Using standard AutoPipelineForImage2Image as fallback if ZImageEditPipeline isn't explicitly exposed yet
+            from diffusers import AutoPipelineForImage2Image
+
+            load_args = {
+                "cache_dir": CACHE_DIR,
+                "torch_dtype": torch.bfloat16,
+                "low_cpu_mem_usage": True,
+            }
+
+            try:
+                # Many custom archs like Z-Image expose the base pipeline and override call, 
+                # or have a dedicated pipeline.
+                try: 
+                    from diffusers import ZImageEditPipeline
+                    edit_pipeline = ZImageEditPipeline.from_pretrained(EDIT_MODEL_ID, **load_args)
+                except ImportError:
+                    edit_pipeline = AutoPipelineForImage2Image.from_pretrained(EDIT_MODEL_ID, **load_args)
+            except Exception as e:
+                logger.warning(f"Initial Edit load failed ({e}), trying local only...")
+                load_args["local_files_only"] = True
+                try: 
+                    from diffusers import ZImageEditPipeline
+                    edit_pipeline = ZImageEditPipeline.from_pretrained(EDIT_MODEL_ID, **load_args)
+                except ImportError:
+                    edit_pipeline = AutoPipelineForImage2Image.from_pretrained(EDIT_MODEL_ID, **load_args)
+
+            try:
+                edit_pipeline.enable_model_cpu_offload()
+                if hasattr(edit_pipeline, 'vae'):
+                    edit_pipeline.vae.enable_tiling()
+            except Exception as mem_err:
+                logger.warning(f"Could not enable model offload: {mem_err}")
+
+            edit_pipeline = apply_device_monkeypatch(edit_pipeline)
+            logger.info("Z-Image Edit loaded successfully.")
+
+        except Exception as e:
+            logger.error(f"Failed to load Z-Image Edit: {e}")
+            logger.error(traceback.format_exc())
+            edit_pipeline = None
+            raise HTTPException(status_code=500, detail=f"Edit Load Error: {str(e)}")
 
 async def idle_check_loop():
     """Background task to unload model after inactivity."""
-    global pipeline, last_activity_time
+    global t2i_pipeline, edit_pipeline, last_activity_time
     unload_timeout = getattr(config, "VISION_IDLE_TIMEOUT", 600)
     
     logger.info(f"Idle check loop started (timeout={unload_timeout}s)")
     while not server_shutdown_event.is_set():
-        if pipeline is not None:
+        if t2i_pipeline is not None or edit_pipeline is not None:
             idle_time = time.time() - last_activity_time
             if idle_time > unload_timeout:
                 logger.info(f"Vision model idle for {int(idle_time)}s. Unloading...")
@@ -207,26 +280,42 @@ async def get_output_file(filename: str):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": MODEL_ID, "model_loaded": pipeline is not None}
+    return {
+        "status": "ok", 
+        "t2i_model": T2I_MODEL_ID, 
+        "edit_model": EDIT_MODEL_ID,
+        "t2i_loaded": t2i_pipeline is not None,
+        "edit_loaded": edit_pipeline is not None
+    }
 
 @app.get("/v1/models")
 async def list_models():
     return {
         "object": "list",
-        "data": [{
-            "id": MODEL_ID, 
-            "object": "model", 
-            "created": int(time.time()), 
-            "owned_by": "zai-org",
-            "capabilities": ["text-to-image"]
-        }]
+        "data": [
+            {
+                "id": T2I_MODEL_ID, 
+                "object": "model", 
+                "created": int(time.time()), 
+                "owned_by": "zai-org",
+                "capabilities": ["text-to-image"]
+            },
+            {
+                "id": EDIT_MODEL_ID, 
+                "object": "model", 
+                "created": int(time.time()), 
+                "owned_by": "zai-org",
+                "capabilities": ["image-to-image"]
+            }
+        ]
     }
 
 @app.get("/v1/internal/status")
 async def internal_status():
     return {
         "status": "generating" if is_generating else "idle",
-        "model_loaded": pipeline is not None
+        "t2i_loaded": t2i_pipeline is not None,
+        "edit_loaded": edit_pipeline is not None
     }
 
 generation_tasks = {}
@@ -237,13 +326,13 @@ def process_async_task(task_id: str, request: ImageGenerationRequest):
     is_generating = True
     
     try:
-        load_model()
+        load_t2i_model()
         width, height = parse_size(request.size)
         width, height = validate_and_round_size(width, height)
         
         logger.info(f"[Task {task_id}] Generating image (Sequential Offload): '{request.prompt[:50]}...'")
         with torch.inference_mode():
-            images = pipeline(
+            images = t2i_pipeline(
                 prompt=request.prompt,
                 negative_prompt=request.negative_prompt,
                 width=width,
@@ -283,6 +372,75 @@ def async_generate(request: ImageGenerationRequest, background_tasks: Background
     background_tasks.add_task(process_async_task, task_id, request)
     return {"task_id": task_id, "status": "processing", "message": "Task queued. Poll GET /v1/images/tasks/{task_id}"}
 
+
+def process_async_edit_task(task_id: str, image_path: str, prompt: str):
+    global last_activity_time, is_generating
+    last_activity_time = time.time()
+    is_generating = True
+    
+    try:
+        load_edit_model()
+        
+        logger.info(f"[Task {task_id}] Editing image (Sequential Offload): '{prompt[:50]}...'")
+        
+        # Load the source image into PIL format for Diffusers
+        source_image = load_image(image_path)
+        
+        with torch.inference_mode():
+            images = edit_pipeline(
+                prompt=prompt,
+                image=source_image,
+                num_inference_steps=50, # Z-Image-Edit recommends 50 steps
+                guidance_scale=4.0
+            ).images
+
+        img = images[0]
+        filename = save_image(img)
+        url = f"http://{config.PUBLIC_HOST}:{PORT}/outputs/{filename}"
+        result_data = {"url": url}
+            
+        generation_tasks[task_id] = {"status": "completed", "data": [result_data]}
+        logger.info(f"[Task {task_id}] Edit completed successfully.")
+        
+    except Exception as e:
+        logger.error(f"[Task {task_id}] Edit error: {e}")
+        logger.error(traceback.format_exc())
+        generation_tasks[task_id] = {"status": "failed", "error": str(e)}
+    finally:
+        is_generating = False
+        # Clean up the temporary uploaded source file
+        try:
+            if os.path.exists(image_path):
+                os.remove(image_path)
+        except:
+             pass
+
+@app.post("/v1/images/async_edit")
+async def async_edit(
+    background_tasks: BackgroundTasks,
+    image: UploadFile = File(...),
+    prompt: str = Form(...)
+):
+    """
+    Agent-proof editing endpoint: Returns immediately, edits in the background.
+    Uses multipart/form-data to accept the source image.
+    """
+    task_id = str(uuid4().hex)
+    
+    # Save the uploaded file temporarily so the background thread can load it
+    temp_dir = os.path.join(CACHE_DIR, "tmp_uploads")
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    temp_path = os.path.join(temp_dir, f"{task_id}_{image.filename}")
+    with open(temp_path, "wb") as buffer:
+        buffer.write(await image.read())
+        
+    generation_tasks[task_id] = {"status": "processing"}
+    background_tasks.add_task(process_async_edit_task, task_id, temp_path, prompt)
+    
+    return {"task_id": task_id, "status": "processing", "message": "Task queued. Poll GET /v1/images/tasks/{task_id}"}
+
+
 @app.get("/v1/images/tasks/{task_id}")
 def get_task_status(task_id: str):
     """
@@ -308,14 +466,14 @@ def generate_image_sync(request: ImageGenerationRequest):
     
     is_generating = True
     
-    load_model()
+    load_t2i_model()
     width, height = parse_size(request.size)
     width, height = validate_and_round_size(width, height)
     
     try:
         logger.info(f"Generating image (Sync): '{request.prompt[:50]}...'")
         with torch.inference_mode():
-            images = pipeline(
+            images = t2i_pipeline(
                 prompt=request.prompt,
                 negative_prompt=request.negative_prompt,
                 width=width,

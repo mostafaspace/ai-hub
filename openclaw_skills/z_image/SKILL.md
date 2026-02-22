@@ -13,7 +13,10 @@ This API uses a background task queue. Generating images takes a few minutes, so
 
 ## 2-Step Agent Workflow
 
-### Step 1: Start Translation Task
+### Step 1: Start a Task
+You have two abilities here: Generating *new* images, or Editing *existing* images.
+
+#### Option A: Generate a New Image
 Send a simple POST request to queue the prompt.
 
 **POST** `/v1/images/async_generate`
@@ -25,7 +28,16 @@ Send a simple POST request to queue the prompt.
 }
 ```
 
-**Response:**
+#### Option B: Edit an Existing Image
+If the user provides an image and asks you to change it (e.g. "Make the cat sad"), you must send the image to the Edit endpoint as a `multipart/form-data` request.
+
+**POST** `/v1/images/async_edit`
+
+**FormData Body:**
+- `image`: The file bytes (e.g., `open('cat.png', 'rb')`)
+- `prompt`: The editing instruction (e.g., "Make the cat sad")
+
+#### Task Response (For both options)
 ```json
 {
   "task_id": "8b9cad0e1f20",
