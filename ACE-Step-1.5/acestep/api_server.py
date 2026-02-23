@@ -2101,19 +2101,48 @@ def create_app() -> FastAPI:
             )
 
         if content_type.startswith("application/json") or content_type.endswith("+json"):
+            raw = await request.body()
+            raw_str = raw.decode("utf-8", errors="replace").strip()
+            
+            # Log raw body for debugging agent issues
+            print(f"[API Server] Raw JSON body ({len(raw_str)} chars): {raw_str[:500]}")
+            
+            body = None
+            
+            # Strategy 1: standard JSON parse
             try:
-                body = await request.json()
+                body = json.loads(raw_str)
             except Exception:
-                # Fallback: try to parse Python-style dicts (single quotes) via ast.literal_eval
-                import ast
-                raw = await request.body()
+                pass
+            
+            # Strategy 2: fix common Python-style syntax (True/False/None, single quotes)
+            if body is None and raw_str:
+                import re
+                fixed = raw_str
+                # Replace Python booleans/None with JSON equivalents
+                fixed = re.sub(r'\bTrue\b', 'true', fixed)
+                fixed = re.sub(r'\bFalse\b', 'false', fixed)
+                fixed = re.sub(r'\bNone\b', 'null', fixed)
+                # Replace single quotes with double quotes (simple heuristic)
+                fixed = fixed.replace("'", '"')
                 try:
-                    body = ast.literal_eval(raw.decode("utf-8"))
+                    body = json.loads(fixed)
                 except Exception:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Invalid JSON body. Ensure property names use double quotes, not single quotes.",
-                    )
+                    pass
+            
+            # Strategy 3: ast.literal_eval for Python dict notation
+            if body is None and raw_str:
+                import ast
+                try:
+                    body = ast.literal_eval(raw_str)
+                except Exception:
+                    pass
+            
+            if body is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid JSON body. Raw: {raw_str[:200]}",
+                )
             if not isinstance(body, dict):
                 raise HTTPException(status_code=400, detail="JSON payload must be an object")
             verify_token_from_request(body, authorization)

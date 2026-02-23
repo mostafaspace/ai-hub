@@ -18,6 +18,11 @@ This skill provides the API specification for the ACE-Step Music server. Agents 
 > **Network Access**: Ensure the agent can reach the server IP (default: `192.168.1.26`).
 > **Cold Start**: The service uses dynamic model loading. The first request after interactivity may take **extra time** (up to 20s) to initialize.
 
+> [!CAUTION]
+> **SHELL QUOTING (CRITICAL)**: If you use `curl` or `Invoke-RestMethod` from a Windows shell, your JSON body will be truncated at the first space unless properly quoted.
+> **DO NOT DO THIS:** `curl -d '{"prompt": "An upbeat..."}'` (Quotes will fail, payload truncates to `{"prompt": "An`)
+> **DO THIS INSTEAD:** Save your JSON to a file first: `echo {"prompt": "An upbeat track"} > payload.json` then `curl -d @payload.json`
+
 ## Capabilities
 
 1.  **Music Generation**: Create tracks from text prompts.
