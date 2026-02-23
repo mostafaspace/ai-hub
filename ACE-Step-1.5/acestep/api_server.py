@@ -1088,6 +1088,7 @@ def create_app() -> FastAPI:
         app.state._initialized = False
         app.state._init_error = None
         app.state._init_lock = init_lock
+        app.state.generation_lock = asyncio.Lock()
 
         app.state.llm_handler = llm_handler
         app.state._llm_initialized = False
@@ -1857,8 +1858,10 @@ def create_app() -> FastAPI:
                     if status_flags["llm_available"]:
                         await stack.enter_async_context(app.state._llm_init_lock)
                     
-                    # Perform the blocking generation
-                    result = await loop.run_in_executor(executor, _blocking_generate)
+                    # Perform the blocking generation, wrapped in the global process lock
+                    # to prevent overlapping threads from causing tensor/device mismatches on 32GB setups
+                    async with app.state.generation_lock:
+                        result = await loop.run_in_executor(executor, _blocking_generate)
                 
                 # Update last_used timestamps AGAIN after generation completes to reset idle timer
                 now = time.time()
@@ -2208,12 +2211,40 @@ def create_app() -> FastAPI:
             async with app.state.job_temp_files_lock:
                 app.state.job_temp_files[rec.job_id] = temp_files
 
+        await q.put((rec.job_id, req))
+
         async with app.state.pending_lock:
             app.state.pending_ids.append(rec.job_id)
             position = len(app.state.pending_ids)
 
-        await q.put((rec.job_id, req))
         return _wrap_response({"task_id": rec.job_id, "status": "queued", "queue_position": position})
+
+    @app.post("/v1/audio/async_generations")
+    async def async_generations_alias(request: Request, authorization: Optional[str] = Header(None)):
+        """
+        OpenClaw compatible wrapper for /release_task.
+        Extracts task_id and mimics OpenAI background task queue semantics.
+        """
+        resp = await create_music_generate_job(request, authorization)
+        
+        # Check for error responses
+        if getattr(resp, "status_code", 200) != 200:
+             return resp
+            
+        # Try returning the JSON directly if it is a dictionary
+        if isinstance(resp, dict):
+            task_id = resp.get("data", {}).get("task_id", "")
+        else:
+            # Fallback for Starlette JSONResponse
+            import json
+            body = json.loads(resp.body.decode('utf-8'))
+            task_id = body.get("data", {}).get("task_id", "")
+            
+        return {
+             "task_id": task_id,
+             "status": "processing",
+             "message": "Task queued. Poll GET /v1/audio/tasks/{task_id}"
+        }
 
     @app.post("/query_result")
     async def query_result(request: Request, authorization: Optional[str] = Header(None)):
@@ -2332,6 +2363,58 @@ def create_app() -> FastAPI:
                 data_list.append({"task_id": task_id, "result": "[]", "status": 0})
 
         return _wrap_response(data_list)
+
+    @app.get("/v1/audio/tasks/{task_id}")
+    async def get_task_status_alias(task_id: str, request: Request, authorization: Optional[str] = Header(None)):
+        """
+        OpenClaw compatible polling endpoint.
+        Directly queries the job store for task status.
+        Returns {"status": "completed", "data": [{"url": "..."}]} if done.
+        """
+        job_store: _JobStore = app.state.job_store
+        rec = job_store.get(task_id)
+        
+        if rec is None:
+            return {
+                "status": "failed",
+                "error": "Task not found (server may have restarted or ID is invalid)."
+            }
+        
+        status_int = STATUS_MAP.get(rec.status, 0)
+        
+        if status_int == 0:
+            return {"status": "processing"}
+        elif status_int == 2:
+            return {"status": "failed", "error": rec.error or "Music generation encountered an error or timed out."}
+        else:
+            # Success (status_int == 1) — build audio URLs
+            audio_urls = []
+            if rec.result and isinstance(rec.result, dict):
+                audio_paths = rec.result.get("audio_paths", [])
+                
+                public_host = os.getenv("PUBLIC_HOST", "").strip()
+                if not public_host:
+                    import socket
+                    try:
+                        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                        s.connect(("8.8.8.8", 80))
+                        ip = s.getsockname()[0]
+                        s.close()
+                    except Exception:
+                        ip = "127.0.0.1"
+                    port = os.getenv("ACESTEP_API_PORT", "8001")
+                    public_host = f"http://{ip}:{port}"
+                
+                for p in audio_paths:
+                    if p.startswith("http://") or p.startswith("https://"):
+                        audio_urls.append({"url": p})
+                    else:
+                        audio_urls.append({"url": f"{public_host}{p}"})
+            
+            return {
+                "status": "completed",
+                "data": audio_urls
+            }
 
     @app.get("/health")
     async def health_check():
