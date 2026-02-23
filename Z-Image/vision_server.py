@@ -13,6 +13,7 @@ if "CUDA_VISIBLE_DEVICES" in os.environ:
     del os.environ["CUDA_VISIBLE_DEVICES"]
 
 import sys
+import threading
 import uvicorn
 import logging
 import asyncio
@@ -319,48 +320,50 @@ async def internal_status():
     }
 
 generation_tasks = {}
+generation_lock = threading.Lock()
 
 def process_async_task(task_id: str, request: ImageGenerationRequest):
     global last_activity_time, is_generating
     last_activity_time = time.time()
-    is_generating = True
     
-    try:
-        load_t2i_model()
-        width, height = parse_size(request.size)
-        width, height = validate_and_round_size(width, height)
-        
-        logger.info(f"[Task {task_id}] Generating image (Sequential Offload): '{request.prompt[:50]}...'")
-        with torch.inference_mode():
-            images = t2i_pipeline(
-                prompt=request.prompt,
-                negative_prompt=request.negative_prompt,
-                width=width,
-                height=height,
-                num_inference_steps=request.num_inference_steps,
-                guidance_scale=request.guidance_scale,
-                cfg_normalization=request.cfg_normalization,
-                num_images_per_prompt=request.n
-            ).images
-
-        img = images[0]
-        
-        if request.response_format == "b64_json":
-            result_data = {"b64_json": image_to_base64(img)}
-        else:
-            filename = save_image(img)
-            url = f"http://{config.PUBLIC_HOST}:{PORT}/outputs/{filename}"
-            result_data = {"url": url}
+    with generation_lock:
+        is_generating = True
+        try:
+            load_t2i_model()
+            width, height = parse_size(request.size)
+            width, height = validate_and_round_size(width, height)
             
-        generation_tasks[task_id] = {"status": "completed", "data": [result_data]}
-        logger.info(f"[Task {task_id}] Completed successfully.")
-        
-    except Exception as e:
-        logger.error(f"[Task {task_id}] Generation error: {e}")
-        logger.error(traceback.format_exc())
-        generation_tasks[task_id] = {"status": "failed", "error": str(e)}
-    finally:
-        is_generating = False
+            logger.info(f"[Task {task_id}] Generating image (Sequential Offload): '{request.prompt[:50]}...'")
+            with torch.inference_mode():
+                images = t2i_pipeline(
+                    prompt=request.prompt,
+                    negative_prompt=request.negative_prompt,
+                    width=width,
+                    height=height,
+                    num_inference_steps=request.num_inference_steps,
+                    guidance_scale=request.guidance_scale,
+                    cfg_normalization=request.cfg_normalization,
+                    num_images_per_prompt=request.n
+                ).images
+
+            img = images[0]
+            
+            if request.response_format == "b64_json":
+                result_data = {"b64_json": image_to_base64(img)}
+            else:
+                filename = save_image(img)
+                url = f"http://{config.PUBLIC_HOST}:{PORT}/outputs/{filename}"
+                result_data = {"url": url}
+                
+            generation_tasks[task_id] = {"status": "completed", "data": [result_data]}
+            logger.info(f"[Task {task_id}] Completed successfully.")
+            
+        except Exception as e:
+            logger.error(f"[Task {task_id}] Generation error: {e}")
+            logger.error(traceback.format_exc())
+            generation_tasks[task_id] = {"status": "failed", "error": str(e)}
+        finally:
+            is_generating = False
 
 @app.post("/v1/images/async_generate")
 def async_generate(request: ImageGenerationRequest, background_tasks: BackgroundTasks):
@@ -376,44 +379,45 @@ def async_generate(request: ImageGenerationRequest, background_tasks: Background
 def process_async_edit_task(task_id: str, image_path: str, prompt: str):
     global last_activity_time, is_generating
     last_activity_time = time.time()
-    is_generating = True
     
-    try:
-        load_edit_model()
-        
-        logger.info(f"[Task {task_id}] Editing image (Sequential Offload): '{prompt[:50]}...'")
-        
-        # Load the source image into PIL format for Diffusers
-        source_image = load_image(image_path)
-        
-        with torch.inference_mode():
-            images = edit_pipeline(
-                prompt=prompt,
-                image=source_image,
-                num_inference_steps=50, # Z-Image-Edit recommends 50 steps
-                guidance_scale=4.0
-            ).images
-
-        img = images[0]
-        filename = save_image(img)
-        url = f"http://{config.PUBLIC_HOST}:{PORT}/outputs/{filename}"
-        result_data = {"url": url}
-            
-        generation_tasks[task_id] = {"status": "completed", "data": [result_data]}
-        logger.info(f"[Task {task_id}] Edit completed successfully.")
-        
-    except Exception as e:
-        logger.error(f"[Task {task_id}] Edit error: {e}")
-        logger.error(traceback.format_exc())
-        generation_tasks[task_id] = {"status": "failed", "error": str(e)}
-    finally:
-        is_generating = False
-        # Clean up the temporary uploaded source file
+    with generation_lock:
+        is_generating = True
         try:
-            if os.path.exists(image_path):
-                os.remove(image_path)
-        except:
-             pass
+            load_edit_model()
+            
+            logger.info(f"[Task {task_id}] Editing image (Sequential Offload): '{prompt[:50]}...'")
+            
+            # Load the source image into PIL format for Diffusers
+            source_image = load_image(image_path)
+            
+            with torch.inference_mode():
+                images = edit_pipeline(
+                    prompt=prompt,
+                    image=source_image,
+                    num_inference_steps=50, # Z-Image-Edit recommends 50 steps
+                    guidance_scale=4.0
+                ).images
+
+            img = images[0]
+            filename = save_image(img)
+            url = f"http://{config.PUBLIC_HOST}:{PORT}/outputs/{filename}"
+            result_data = {"url": url}
+                
+            generation_tasks[task_id] = {"status": "completed", "data": [result_data]}
+            logger.info(f"[Task {task_id}] Edit completed successfully.")
+            
+        except Exception as e:
+            logger.error(f"[Task {task_id}] Edit error: {e}")
+            logger.error(traceback.format_exc())
+            generation_tasks[task_id] = {"status": "failed", "error": str(e)}
+        finally:
+            is_generating = False
+            # Clean up the temporary uploaded source file
+            try:
+                if os.path.exists(image_path):
+                    os.remove(image_path)
+            except:
+                 pass
 
 @app.post("/v1/images/async_edit")
 async def async_edit(
@@ -467,43 +471,43 @@ def generate_image_sync(request: ImageGenerationRequest):
     global last_activity_time, is_generating
     last_activity_time = time.time()
     
-    is_generating = True
-    
-    load_t2i_model()
-    width, height = parse_size(request.size)
-    width, height = validate_and_round_size(width, height)
-    
-    try:
-        logger.info(f"Generating image (Sync): '{request.prompt[:50]}...'")
-        with torch.inference_mode():
-            images = t2i_pipeline(
-                prompt=request.prompt,
-                negative_prompt=request.negative_prompt,
-                width=width,
-                height=height,
-                num_inference_steps=request.num_inference_steps,
-                guidance_scale=request.guidance_scale,
-                cfg_normalization=request.cfg_normalization,
-                num_images_per_prompt=request.n
-            ).images
+    with generation_lock:
+        is_generating = True
+        try:
+            load_t2i_model()
+            width, height = parse_size(request.size)
+            width, height = validate_and_round_size(width, height)
+            
+            logger.info(f"Generating image (Sync): '{request.prompt[:50]}...'")
+            with torch.inference_mode():
+                images = t2i_pipeline(
+                    prompt=request.prompt,
+                    negative_prompt=request.negative_prompt,
+                    width=width,
+                    height=height,
+                    num_inference_steps=request.num_inference_steps,
+                    guidance_scale=request.guidance_scale,
+                    cfg_normalization=request.cfg_normalization,
+                    num_images_per_prompt=request.n
+                ).images
 
-        data = []
-        for img in images:
-            if request.response_format == "b64_json":
-                data.append({"b64_json": image_to_base64(img)})
-            else:
-                filename = save_image(img)
-                url = f"http://{config.PUBLIC_HOST}:{PORT}/outputs/{filename}"
-                data.append({"url": url})
-        
-        return {"created": int(time.time()), "data": data}
-        
-    except Exception as e:
-        logger.error(f"Generation error: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        is_generating = False
+            data = []
+            for img in images:
+                if request.response_format == "b64_json":
+                    data.append({"b64_json": image_to_base64(img)})
+                else:
+                    filename = save_image(img)
+                    url = f"http://{config.PUBLIC_HOST}:{PORT}/outputs/{filename}"
+                    data.append({"url": url})
+            
+            return {"created": int(time.time()), "data": data}
+            
+        except Exception as e:
+            logger.error(f"Generation error: {e}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            is_generating = False
 
 if __name__ == "__main__":
     logger.info(f"Vision Service starting (Sequential Offload) on {HOST}:{PORT}")
