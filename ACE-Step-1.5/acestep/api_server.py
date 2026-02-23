@@ -1370,6 +1370,15 @@ def create_app() -> FastAPI:
                 result_data = [{"file": "", "wave": "", "status": status_int, "create_time": int(create_time), "env": env, "error": error_msg}]
 
             result_key = f"{RESULT_KEY_PREFIX}{job_id}"
+            
+            # The query_result endpoint expects `data` to be a JSON string, so we must serialize it
+            if isinstance(result_data, (list, dict)):
+                try:
+                    import json
+                    result_data = json.dumps(result_data)
+                except Exception:
+                    pass
+                    
             local_cache.set(result_key, result_data, ex=RESULT_EXPIRE_SECONDS)
 
         async def _run_one_job(job_id: str, req: GenerateMusicRequest) -> None:
