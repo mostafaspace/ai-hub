@@ -2100,15 +2100,20 @@ def create_app() -> FastAPI:
                 **kwargs,
             )
 
-        if content_type.startswith("application/json"):
-            body = await request.json()
-            if not isinstance(body, dict):
-                raise HTTPException(status_code=400, detail="JSON payload must be an object")
-            verify_token_from_request(body, authorization)
-            req = _build_request(RequestParser(body))
-
-        elif content_type.endswith("+json"):
-            body = await request.json()
+        if content_type.startswith("application/json") or content_type.endswith("+json"):
+            try:
+                body = await request.json()
+            except Exception:
+                # Fallback: try to parse Python-style dicts (single quotes) via ast.literal_eval
+                import ast
+                raw = await request.body()
+                try:
+                    body = ast.literal_eval(raw.decode("utf-8"))
+                except Exception:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid JSON body. Ensure property names use double quotes, not single quotes.",
+                    )
             if not isinstance(body, dict):
                 raise HTTPException(status_code=400, detail="JSON payload must be an object")
             verify_token_from_request(body, authorization)

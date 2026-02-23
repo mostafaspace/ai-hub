@@ -1,7 +1,7 @@
 """
-Antigravity AI - Vision Service (GLM-Image) Test Script
+Antigravity AI - Vision Service (Z-Image) Test Script
 
-Tests the GLM-Image Vision Service endpoints:
+Tests the Z-Image Vision Service endpoints:
   - Health check
   - Text-to-image generation
   - Image-to-image editing
@@ -35,7 +35,7 @@ def test_health():
         response = requests.get(f"{BASE_URL}/health", timeout=5)
         if response.status_code == 200:
             data = response.json()
-            print(f"  [OK] Status: {data['status']}, Model: {data['model']}, Loaded: {data['model_loaded']}")
+            print(f"  [OK] Status: {data['status']}, T2I Model: {data.get('t2i_model')}, Edit Model: {data.get('edit_model')}")
             return True
         else:
             print(f"  [FAILED] Status {response.status_code}")
@@ -64,42 +64,61 @@ def test_models():
         return False
 
 
+def poll_task(task_id: str, timeout_sec: int = 600) -> dict:
+    """Helper to poll an async vision task."""
+    start_time = time.time()
+    while time.time() - start_time < timeout_sec:
+        response = requests.get(f"{BASE_URL}/v1/images/tasks/{task_id}", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data["status"] == "completed":
+                return data
+            elif data["status"] == "failed":
+                return data
+        time.sleep(3)
+    return {"status": "timeout"}
+
 def test_text_to_image():
     """Test text-to-image generation."""
     print(f"\n[TEST] Text-to-image generation ...")
     payload = {
         "prompt": "A futuristic city with flying cars and neon lights, highly detailed, photorealistic",
+        "negative_prompt": "blurry, low quality, distorted",
         "n": 1,
         "size": "1024x1024",
         "response_format": "url",
-        "num_inference_steps": 50,
-        "guidance_scale": 1.5,
+        "num_inference_steps": 10,  # lower steps for faster testing
+        "guidance_scale": 4.0,
+        "cfg_normalization": False,
     }
 
     try:
         start_time = time.time()
-        print("  Sending generation request (GLM-Image can take several minutes)...")
-        response = requests.post(f"{BASE_URL}/v1/images/generations", json=payload, timeout=600)
+        print("  Sending async generation request...")
+        response = requests.post(f"{BASE_URL}/v1/images/async_generate", json=payload, timeout=5)
 
         if response.status_code == 200:
+            task_id = response.json().get("task_id")
+            print(f"  [OK] Task queued. ID: {task_id}. Polling...")
+            
+            result = poll_task(task_id)
             duration = time.time() - start_time
-            data = response.json()
-            print(f"  [OK] Generation took {duration:.2f}s")
-
-            if "data" in data and len(data["data"]) > 0:
-                item = data["data"][0]
-                if "url" in item:
-                    print(f"  Image URL: {item['url']}")
-                elif "b64_json" in item:
-                    print(f"  Got base64 image ({len(item['b64_json'])} chars)")
-            return True
+            
+            if result.get("status") == "completed":
+                print(f"  [OK] Generation took {duration:.2f}s")
+                data = result.get("data", [])
+                if data:
+                    item = data[0]
+                    if "url" in item:
+                        print(f"  Image URL: {item['url']}")
+                return True
+            else:
+                print(f"  [FAILED] Task status: {result.get('status')}")
+                return False
         else:
             print(f"  [FAILED] Status {response.status_code}: {response.text}")
             return False
 
-    except requests.exceptions.Timeout:
-        print("  [TIMEOUT] Request timed out after 600s")
-        return False
     except Exception as e:
         print(f"  [ERROR] {e}")
         return False
@@ -112,24 +131,31 @@ def test_text_to_image_b64():
         "prompt": "A cute cat sitting on a windowsill, watercolor painting",
         "size": "512x512",
         "response_format": "b64_json",
-        "num_inference_steps": 30,
+        "num_inference_steps": 10,
     }
 
     try:
         start_time = time.time()
-        response = requests.post(f"{BASE_URL}/v1/images/generations", json=payload, timeout=600)
+        response = requests.post(f"{BASE_URL}/v1/images/async_generate", json=payload, timeout=5)
 
         if response.status_code == 200:
+            task_id = response.json().get("task_id")
+            print(f"  [OK] Task queued. ID: {task_id}. Polling...")
+            
+            result = poll_task(task_id)
             duration = time.time() - start_time
-            data = response.json()
-            b64 = data["data"][0].get("b64_json", "")
-            if b64:
-                # Verify valid image data
-                img_bytes = base64.b64decode(b64)
-                print(f"  [OK] Got {len(img_bytes)} bytes of image data in {duration:.2f}s")
-                return True
+            
+            if result.get("status") == "completed":
+                b64 = result["data"][0].get("b64_json", "")
+                if b64:
+                    img_bytes = base64.b64decode(b64)
+                    print(f"  [OK] Got {len(img_bytes)} bytes of image data in {duration:.2f}s")
+                    return True
+                else:
+                    print("  [FAILED] No b64_json in response")
+                    return False
             else:
-                print("  [FAILED] No b64_json in response")
+                print(f"  [FAILED] Task status: {result.get('status')}")
                 return False
         else:
             print(f"  [FAILED] Status {response.status_code}: {response.text}")
@@ -159,23 +185,28 @@ def test_image_to_image():
         start_time = time.time()
         files = {"image": ("test_input.png", buf, "image/png")}
         data = {
-            "prompt": "Transform this into a beautiful sunset landscape",
-            "size": "512x512",
-            "response_format": "url",
-            "num_inference_steps": 30,
+            "prompt": "Transform this into a beautiful sunset landscape"
         }
 
-        response = requests.post(f"{BASE_URL}/v1/images/edits", files=files, data=data, timeout=600)
+        response = requests.post(f"{BASE_URL}/v1/images/async_edit", files=files, data=data, timeout=5)
 
         if response.status_code == 200:
+            task_id = response.json().get("task_id")
+            print(f"  [OK] Edit Task queued. ID: {task_id}. Polling...")
+            
+            result = poll_task(task_id)
             duration = time.time() - start_time
-            result = response.json()
-            if "data" in result and len(result["data"]) > 0:
-                item = result["data"][0]
+            
+            if result.get("status") == "completed":
                 print(f"  [OK] Image edit completed in {duration:.2f}s")
+                item = result["data"][0]
                 if "url" in item:
                     print(f"  Result URL: {item['url']}")
                 return True
+            else:
+                print(f"  [FAILED] Task status: {result.get('status')} - Error: {result.get('error')}")
+                # We expect edit to fail because Tongyi-MAI/Z-Image-Edit isn't available
+                return False
         else:
             print(f"  [FAILED] Status {response.status_code}: {response.text}")
             return False
@@ -195,7 +226,7 @@ def main():
 
     if not health_ok:
         print("\n[ABORT] Server is not reachable. Start it first:")
-        print("  cd Vision-Service && python vision_server.py")
+        print("  cd Z-Image && python vision_server.py")
         return False
 
     t2i_ok = test_text_to_image()
