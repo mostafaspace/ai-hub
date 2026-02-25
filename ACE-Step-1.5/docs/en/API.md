@@ -278,6 +278,20 @@ In addition to supporting all the above fields as Form Fields, the following fil
 
 ### 4.4 Usage Examples (cURL)
 
+**OpenAI-Compatible Method (Recommended)**:
+
+The `/v1/audio/async_generations` endpoint is an alias for `/release_task` that returns a standardized OpenAI-like background task response.
+
+```bash
+curl -X POST http://localhost:8001/v1/audio/async_generations \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "prompt": "upbeat pop song",
+    "lyrics": "Hello world",
+    "inference_steps": 8
+  }'
+```
+
 **Basic JSON Method**:
 
 ```bash
@@ -413,6 +427,16 @@ curl -X POST http://localhost:8001/release_task \
 | `dit_model` | string | DiT model name used |
 
 ### 5.4 Usage Example
+
+**OpenAI-Compatible Polling Method (Recommended)**:
+
+The `/v1/audio/tasks/{task_id}` endpoint is an alias that directly queries the job store and returns standard `processing`, `completed`, or `failed` statuses.
+
+```bash
+curl http://localhost:8001/v1/audio/tasks/550e8400-e29b-41d4-a716-446655440000
+```
+
+**Legacy Batch Query Method**:
 
 ```bash
 curl -X POST http://localhost:8001/query_result \

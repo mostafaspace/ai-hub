@@ -17,8 +17,8 @@ High-fidelity text-to-speech generation powered by the latest Qwen models.
 ### 🎵 ACE-Step Music
 Advanced music generation service utilizing the ACE-Step-1.5 model.
 - **Path**: [`/ACE-Step-1.5`](./ACE-Step-1.5)
-- **Primary Endpoint**: `http://<device-ip>:8001/release_task`
-- **Features**: Prompt-based music generation, flexible duration settings, and asynchronous task processing.
+- **Primary Endpoint**: `http://<device-ip>:8001/v1/audio/async_generations`
+- **Features**: Prompt-based music generation, flexible duration settings, and asynchronous task processing with OpenAI-compatible endpoint aliases.
 
 ### 🎧 Qwen3 ASR
 Automatic Speech Recognition and Audio Intelligence.
