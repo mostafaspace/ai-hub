@@ -32,6 +32,12 @@ High-fidelity photorealistic and bilingual image generation powered by the Tongy
 - **Primary Endpoint**: `http://<device-ip>:8003/v1/images/generations`
 - **Features**: Text-to-image generation, image-to-image editing, OpenAI-compatible API, base64 and URL response formats.
 
+### 🎬 LTX-2 Video
+High-fidelity, synchronized audio and video generation powered by Lightricks' DiT-based foundation model.
+- **Path**: [`/LTX-2-Video`](./LTX-2-Video)
+- **Primary Endpoint**: `http://<device-ip>:8004/v1/video/t2v`
+- **Features**: Text-to-Video, Image-to-Video generation, multimodality sync, automatic VRAM unloading.
+
 ---
 
 ## 💻 System Requirements
@@ -44,6 +50,7 @@ AI-Hub runs powerful generative models locally. Below are the estimated VRAM req
 | **ACE-Step Music** | 1.5 Turbo (DiT + 1.7B LM) | float16 | ~8-12 GB* |
 | **Qwen3 ASR** | Qwen2-Audio-7B | float16 | ~16-18 GB |
 | **Vision (Z-Image)** | 6B DiT | bfloat16 | ~16 GB** |
+| **LTX-2 Video** | 19B DiT (FP8) | fp8 | ~16-24 GB |
 
 > [!NOTE]
 > **ACE-Step Music** scales with available VRAM. It can run in "DiT-only" mode on as little as **4GB VRAM**, or use larger Language Models (up to 4B) if 16GB+ is available.
@@ -121,6 +128,7 @@ ai-hub/
 ├── Qwen3-TTS/         # Text-to-speech service (Port 8000)
 ├── Qwen3-ASR/         # Speech-to-text service (Port 8002)
 ├── Z-Image/           # Image generation service (Port 8003)
+├── LTX-2-Video/       # Video generation service (Port 8004)
 ├── openclaw_skills/   # Extensible skills for AI agents
 ├── run_server.bat     # Centralized launcher menu
 ├── unified_server.py  # Unified All-in-One process manager

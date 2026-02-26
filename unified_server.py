@@ -24,7 +24,7 @@ import config
 
 def kill_port_occupants():
     """Kill any existing processes occupying our configured ports."""
-    ports = [config.TTS_PORT, config.MUSIC_PORT, config.ASR_PORT, config.VISION_PORT]
+    ports = [config.TTS_PORT, config.MUSIC_PORT, config.ASR_PORT, config.VISION_PORT, config.VIDEO_PORT]
     pids_to_kill = set()
 
     for port in ports:
@@ -91,6 +91,12 @@ SERVERS = [
         "cmd": ["python", "vision_server.py"],
         "color": "\033[92m",  # Green
     },
+    {
+        "name": "VIDEO",
+        "cwd": "LTX-2-Video",
+        "cmd": ["python", "server.py"],
+        "color": "\033[94m",  # Blue
+    },
 ]
 
 # Global state
@@ -134,6 +140,10 @@ def start_servers():
         # Force single GPU (device 0) for Music server to prevent tensor device mismatch
         if server_conf["name"] == "MUSIC":
             env["CUDA_VISIBLE_DEVICES"] = "0"
+
+        # LTX-2 Video memory optimization
+        if server_conf["name"] == "VIDEO":
+            env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
         try:
             p = subprocess.Popen(

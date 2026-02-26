@@ -31,6 +31,7 @@ SERVERS = [
     {"name": "ACE-Step Music", "port": config.MUSIC_PORT, "health": "/health", "url": f"http://{DEVICE_IP}:{config.MUSIC_PORT}"},
     {"name": "Qwen3 ASR", "port": config.ASR_PORT, "health": "/health", "url": f"http://{DEVICE_IP}:{config.ASR_PORT}"},
     {"name": "Vision (Z-Image)", "port": config.VISION_PORT, "health": "/health", "url": f"http://{DEVICE_IP}:{config.VISION_PORT}"},
+    {"name": "LTX-2 Video", "port": config.VIDEO_PORT, "health": "/health", "url": f"http://{DEVICE_IP}:{config.VIDEO_PORT}"},
 ]
 
 
@@ -188,6 +189,41 @@ def test_vision_server():
         return False
 
 
+def test_video_server():
+    """Test the LTX-2 Video service with a quick t2v request."""
+    print(f"\n[TEST] Testing LTX-2 Video Server at {DEVICE_IP}...")
+    try:
+        response = requests.post(
+            f"http://{DEVICE_IP}:{config.VIDEO_PORT}/v1/video/t2v",
+            json={
+                "prompt": "a simple test video, black screen",
+                "height": 256,
+                "width": 256,
+                "num_frames": 17,
+                "frame_rate": 8.0,
+                "num_inference_steps": 2, # ultra low for sanity check
+                "seed": 42
+            },
+            timeout=600,
+            stream=True
+        )
+        if response.status_code == 200:
+            print(f"  [OK] Video generation successful!")
+            filename = "test_video_output.mp4"
+            with open(filename, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            print(f"  [SAVED] Video saved to: {filename}")
+            return True
+        else:
+            print(f"  [ERROR] Video failed: {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"  [ERROR] Video test failed: {e}")
+        return False
+
+
 def main():
     print("=" * 60)
     print("      ANTIGRAVITY AI - Server Health Check")
@@ -220,6 +256,9 @@ def main():
     # Test Vision
     vision_ok = test_vision_server()
     
+    # Test LTX-2
+    video_ok = test_video_server()
+    
     # Summary
     print("\n" + "=" * 60)
     print("      Test Summary")
@@ -228,9 +267,10 @@ def main():
     print(f"  ACE-Step:     {'[OK]' if acestep_ok else '[FAILED/OFFLINE]'}")
     print(f"  Qwen3 ASR:    {'[OK]' if asr_ok else '[FAILED/OFFLINE]'}")
     print(f"  Vision:       {'[OK]' if vision_ok else '[FAILED/OFFLINE]'}")
+    print(f"  LTX-2 Video:  {'[OK]' if video_ok else '[FAILED/OFFLINE]'}")
     print("=" * 60)
     
-    return tts_ok and acestep_ok and asr_ok and vision_ok
+    return tts_ok and acestep_ok and asr_ok and vision_ok and video_ok
 
 
 if __name__ == "__main__":

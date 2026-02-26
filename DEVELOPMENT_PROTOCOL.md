@@ -13,10 +13,12 @@ For every feature implementation, code change, or new server addition, you **MUS
 - [ ] **Update README.md**: Add new services, features, or configuration changes to the main `README.md`.
 - [ ] **Update API Docs**: Ensure `openapi.yaml` or equivalent API documentation reflects all endpoint changes.
 - [ ] **Update Skills**: Update `SKILL.md` files in `openclaw_skills/` to match new agent capabilities.
+- [ ] **Skills are Agent-Facing**: `openclaw_skills/` SKILL.md files are consumed by **remote agents on other machines**. They must contain ONLY: API endpoints (using the LAN IP from `config.py`), request/response formats, usage examples, and domain-specific guides (e.g. prompting tips). **Never include**: local filesystem paths (`d:\antigravity\...`), server startup commands, installation steps, or any host-specific configuration.
 
 ### 3. ✅ Verification & Testing
 - [ ] **Test Everything**: Run `test_all_servers.py` to ensure no regressions.
 - [ ] **Verify End-to-End**: Ensure the entire flow (request -> processing -> response -> unload) works smoothly.
+- [ ] **Async Polling Pattern**: All AI generation APIs (image, video, music, etc.) **must** expose async polling endpoints: `POST /async_*` returns `task_id` immediately, `GET /tasks/{task_id}` polls for `processing`/`completed`/`failed`, completed tasks return a download URL via `GET /outputs/{filename}`. Agents cannot hold HTTP connections for minutes; sync endpoints are legacy only.
 
 ### 4. 🔄 Unified Launcher Sync
 - [ ] **Sync Launchers**: Always update `unified_server.py` AND `run_server.bat` together when modifying server startup logic.
@@ -33,3 +35,6 @@ For every feature implementation, code change, or new server addition, you **MUS
 
 ### 7. 🗄️ Caching Data Structs
 - [ ] **Strict Serialization**: When using local caches (like Redis or in-memory dicts) that return JSON strings via `query_result` or HTTP responses, **always** ensure data pushed to the cache is serialized (`json.dumps()`). If Python lists/dicts are pushed raw and someone calls `json.loads(cached_data)`, the API thread will silently crash or hang agent polling loops indefinitely.
+
+### 8. 📂 Code Organization
+- [ ] **Tests Location**: All test scripts (`test_*.py`) must reside in the `tests/` directory to keep the root clean. Avoid cluttering the project root with one-off verification scripts.

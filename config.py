@@ -25,6 +25,7 @@ TTS_PORT = 8000
 MUSIC_PORT = 8001
 ASR_PORT = 8002
 VISION_PORT = 8003
+VIDEO_PORT = 8004
 
 # --- Client / Test Configuration ---
 # IP and ports to use when running tests locally.
@@ -46,6 +47,12 @@ ASR_MODEL_PATH = "Qwen/Qwen2-Audio-7B-Instruct"
 # Z-Image Vision Model
 VISION_MODEL = "Tongyi-MAI/Z-Image"
 VISION_OFFLOAD_CPU = False  # Disabled: 2 GPUs (5090 32GB + 4070Ti 12GB) can hold the full model
+
+# LTX-2 Video Models
+VIDEO_MODEL_BASE = os.path.join(HF_HOME, "Lightricks/LTX-2/ltx-2-19b-dev-fp8.safetensors")
+VIDEO_GEMMA_ROOT = os.path.join(HF_HOME, "google/gemma-3-12b-it-qat-q4_0-unquantized")
+VIDEO_DISTILLED_LORA = os.path.join(HF_HOME, "Lightricks/LTX-2/ltx-2-19b-distilled-lora-384.safetensors")
+VIDEO_SPATIAL_UPSAMPLER = os.path.join(HF_HOME, "Lightricks/LTX-2/ltx-2-spatial-upscaler-x2-1.0.safetensors")
 
 # --- Device Configuration ---
 # Default strategy: "auto" (Accelerate), "cuda", or "cpu"

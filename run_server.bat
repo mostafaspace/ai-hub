@@ -20,6 +20,7 @@ echo   [1] Qwen3 TTS Server         (Port 8000) - Text-to-Speech
 echo   [2] ACE-Step Music Server    (Port 8001) - Music Generation
 echo   [3] Qwen3 ASR Server         (Port 8002) - Speech-to-Text
 echo   [4] Vision Service           (Port 8003) - Z-Image Generation
+echo   [5] LTX-2 Video Server       (Port 8004) - Video Generation
 echo.
 echo   [A] Start ALL Servers (with auto-restart)
 echo   [U] Unified Server (All in one window)
@@ -34,6 +35,7 @@ if /i "%choice%"=="1" goto TTS
 if /i "%choice%"=="2" goto ACESTEP
 if /i "%choice%"=="3" goto ASR
 if /i "%choice%"=="4" goto VISION
+if /i "%choice%"=="5" goto VIDEO
 if /i "%choice%"=="A" goto START_ALL
 if /i "%choice%"=="U" goto UNIFIED
 if /i "%choice%"=="R" goto RESTART_ALL
@@ -70,6 +72,10 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8002.*LISTENING"') do (
 )
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8003.*LISTENING"') do (
     echo Killing process on port 8003 (PID: %%a)
+    taskkill /F /PID %%a >nul 2>&1
+)
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8004.*LISTENING"') do (
+    echo Killing process on port 8004 (PID: %%a)
     taskkill /F /PID %%a >nul 2>&1
 )
 echo All servers stopped.
@@ -112,6 +118,15 @@ echo Vision Service starting in new window!
 pause
 goto MENU
 
+:VIDEO
+call :KILL_PORT 8004
+echo.
+echo Starting LTX-2 Video Server on port 8004...
+start "LTX-2 Video Server" cmd /k "cd /d %~dp0LTX-2-Video && set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && set HF_HOME=D:\hf_models && python server.py"
+echo Video Server starting in new window!
+pause
+goto MENU
+
 :RESTART_ALL
 call :KILL_ALL
 goto START_ALL
@@ -130,20 +145,24 @@ call :KILL_ALL
 timeout /t 2 >nul
 
 echo.
-echo [1/4] Starting Qwen3 TTS Server (port 8000)...
+echo [1/5] Starting Qwen3 TTS Server (port 8000)...
 start "Qwen3 TTS Server" cmd /k "cd /d %~dp0Qwen3-TTS && set HF_HOME=D:\hf_models&& python server.py"
 timeout /t 3 >nul
 
-echo [2/4] Starting ACE-Step Music Server (port 8001)...
+echo [2/5] Starting ACE-Step Music Server (port 8001)...
 start "ACE-Step Music Server" cmd /k "cd /d %~dp0ACE-Step-1.5 && uv run acestep-api --host 0.0.0.0 --port 8001"
 timeout /t 3 >nul
 
-echo [3/4] Starting Qwen3 ASR Server (port 8002)...
+echo [3/5] Starting Qwen3 ASR Server (port 8002)...
 start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && python server.py"
 timeout /t 3 >nul
 
-echo [4/4] Starting Vision Service (port 8003)...
+echo [4/5] Starting Vision Service (port 8003)...
 start "Vision Service" cmd /k "cd /d %~dp0Z-Image && set HF_HOME=D:\hf_models && python vision_server.py"
+timeout /t 3 >nul
+
+echo [5/5] Starting LTX-2 Video Server (port 8004)...
+start "LTX-2 Video Server" cmd /k "cd /d %~dp0LTX-2-Video && set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && set HF_HOME=D:\hf_models && python server.py"
 
 echo.
 echo ============================================================
@@ -154,6 +173,7 @@ echo     TTS:       http://localhost:8000
 echo     ACE-Step:  http://localhost:8001
 echo     ASR:       http://localhost:8002
 echo     Vision:    http://localhost:8003
+echo     Video:     http://localhost:8004
 echo.
 echo   Wait ~60 seconds for models to load, then test with:
 echo     python test_all_servers.py

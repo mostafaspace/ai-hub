@@ -1,0 +1,18 @@
+fastapi
+uvicorn
+pydantic
+imageio-ffmpeg
+torch
+huggingface_hub
+accelerate
+safetensors
+diffusers
+transformers
+loguru
+av
+scikit-image
+imageio
+tifffile
+torchaudio
+scipy
+# We will install ltx-pipelines from the cloned repo directly
