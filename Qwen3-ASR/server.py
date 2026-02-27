@@ -69,19 +69,30 @@ class ModelManager:
         """Background thread to unload models after idle timeout."""
         while True:
             time.sleep(self.check_interval)
-            with self.lock:
-                if self.model and (time.time() - self.last_active > self.idle_timeout):
-                    logger.info(f"Idle timeout reached ({self.idle_timeout}s). Unloading Qwen2-Audio model...")
-                    self.unload()
+            # Lock-free check (reading a float is atomic in CPython)
+            if self.model and (time.time() - self.last_active > self.idle_timeout):
+                with self.lock:
+                    # Double-check under lock before unloading
+                    if self.model and (time.time() - self.last_active > self.idle_timeout):
+                        logger.info(f"Idle timeout reached ({self.idle_timeout}s). Unloading Qwen2-Audio model...")
+                        self._unload_internal()
+
+    def _unload_internal(self):
+        """Unload without acquiring lock (caller must hold lock)."""
+        self.model = None
+        self.processor = None
+        gc.collect()
+        torch.cuda.empty_cache()
+        logger.info("[ASR] Model unloaded, VRAM freed.")
 
     def unload(self):
         """Force unload model and clear cache."""
         with self.lock:
-            self.model = None
-            self.processor = None
-            gc.collect()
-            torch.cuda.empty_cache()
-            logger.info("Model unloaded.")
+            self._unload_internal()
+
+    def touch(self):
+        """Reset the idle timer. Call after every generation completes."""
+        self.last_active = time.time()
 
     def get_model(self):
         with self.lock:
@@ -237,6 +248,8 @@ async def transcribe(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        manager.touch()
 
 @app.post("/v1/chat/completions")
 async def chat_completions(req: ChatCompletionRequest):
@@ -391,6 +404,8 @@ async def chat_completions(req: ChatCompletionRequest):
     except Exception as e:
         logger.error(f"Chat completion error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        manager.touch()
 
 if __name__ == "__main__":
     uvicorn.run(app, host=HOST, port=PORT)

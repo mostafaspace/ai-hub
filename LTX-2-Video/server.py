@@ -82,18 +82,30 @@ class ModelManager:
     def _idle_monitor(self):
         while True:
             time.sleep(self.check_interval)
-            with self.lock:
-                if self.pipeline and (time.time() - self.last_active > self.idle_timeout):
-                    print(f"[LTX-2] Idle timeout reached ({self.idle_timeout}s). Unloading pipeline...")
-                    self.unload_all()
+            # Lock-free check first (reading a float is atomic in CPython)
+            if self.pipeline and (time.time() - self.last_active > self.idle_timeout):
+                with self.lock:
+                    # Double-check under lock before unloading
+                    if self.pipeline and (time.time() - self.last_active > self.idle_timeout):
+                        print(f"[LTX-2] Idle timeout reached ({self.idle_timeout}s). Unloading pipeline...")
+                        self._unload_internal()
+
+    def _unload_internal(self):
+        """Unload without acquiring lock (caller must hold lock)."""
+        if self.pipeline:
+            del self.pipeline
+            self.pipeline = None
+            gc.collect()
+            torch.cuda.empty_cache()
+            print("[LTX-2] Pipeline unloaded, VRAM freed.")
 
     def unload_all(self):
         with self.lock:
-            if self.pipeline:
-                del self.pipeline
-                self.pipeline = None
-                gc.collect()
-                torch.cuda.empty_cache()
+            self._unload_internal()
+
+    def touch(self):
+        """Reset the idle timer. Call after every generation completes."""
+        self.last_active = time.time()
 
     def get_pipeline(self):
         with self.lock:
@@ -254,6 +266,7 @@ def _process_async_t2v(task_id: str, prompt: str, height: int, width: int,
             video_tasks[task_id] = {"status": "failed", "error": str(e)}
         finally:
             is_generating = False
+            manager.touch()
 
 
 def _process_async_i2v(task_id: str, image_path: str, prompt: str,
@@ -297,6 +310,7 @@ def _process_async_i2v(task_id: str, image_path: str, prompt: str,
             video_tasks[task_id] = {"status": "failed", "error": str(e)}
         finally:
             is_generating = False
+            manager.touch()
             try:
                 if os.path.exists(image_path):
                     os.remove(image_path)
@@ -441,6 +455,8 @@ def generate_t2v(req: VideoGenerationRequest):
             import traceback
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            manager.touch()
 
 @app.post("/v1/video/i2v")
 async def generate_i2v(
@@ -546,6 +562,8 @@ async def generate_i2v(
             import traceback
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            manager.touch()
 
 if __name__ == "__main__":
     uvicorn.run(app, host=HOST, port=PORT)

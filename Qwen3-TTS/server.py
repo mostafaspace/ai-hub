@@ -103,19 +103,31 @@ class ModelManager:
     def _idle_monitor(self):
         """Background thread to unload models after idle timeout."""
         while True:
-            time.sleep(self.check_interval) # Check every check_interval seconds
-            with self.lock:
-                if self.current_model_type and (time.time() - self.last_active > self.idle_timeout):
-                    print(f"Idle timeout reached ({self.idle_timeout}s). Unloading {self.current_model_type} model...")
-                    self.unload_all()
+            time.sleep(self.check_interval)
+            # Lock-free check (reading a float is atomic in CPython)
+            if self.current_model_type and (time.time() - self.last_active > self.idle_timeout):
+                with self.lock:
+                    # Double-check under lock before unloading
+                    if self.current_model_type and (time.time() - self.last_active > self.idle_timeout):
+                        print(f"Idle timeout reached ({self.idle_timeout}s). Unloading {self.current_model_type} model...")
+                        self._unload_internal()
+
+    def _unload_internal(self):
+        """Unload without acquiring lock (caller must hold lock)."""
+        self.models.clear()
+        self.current_model_type = None
+        gc.collect()
+        torch.cuda.empty_cache()
+        print("[TTS] Models unloaded, VRAM freed.")
 
     def unload_all(self):
         """Force unload all models and clear cache."""
         with self.lock:
-            self.models.clear()
-            self.current_model_type = None
-            gc.collect()
-            torch.cuda.empty_cache()
+            self._unload_internal()
+
+    def touch(self):
+        """Reset the idle timer. Call after every generation completes."""
+        self.last_active = time.time()
 
     def get_model(self, model_type: Literal["custom", "design", "base"]):
         with self.lock:
@@ -318,6 +330,8 @@ def generate_speech(req: TTSSpeechRequest):
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        manager.touch()
 
 @app.post("/v1/audio/tts")
 def generate_tts_alias(req: TTSSpeechRequest):
@@ -345,6 +359,8 @@ def generate_voice_design(req: VoiceDesignRequest):
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        manager.touch()
 
 @app.post("/v1/audio/voice_clone")
 async def generate_voice_clone(
@@ -431,6 +447,8 @@ async def generate_voice_clone(
         print(f"Error: {e}")
         # Cleanup is handled in finally block of inner try/except
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        manager.touch()
 
 
 

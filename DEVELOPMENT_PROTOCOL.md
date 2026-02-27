@@ -7,6 +7,8 @@ For every feature implementation, code change, or new server addition, you **MUS
 
 ### 1. 📉 Resource Management (Auto-Unload)
 - [ ] **Implement Auto-Unload**: Ensure models automatically unload from VRAM after a period of inactivity (default: 60-600s depending on model size).
+- [ ] **Lock-Free Idle Monitor**: The `_idle_monitor` thread must **NOT** hold the lock during the timestamp check. Use a lock-free double-check pattern: check `last_active` without the lock first, then acquire the lock only for the actual unload, and double-check the timestamp again under the lock. This prevents the monitor from blocking during long-running generation.
+- [ ] **Touch After Generation**: Every generation endpoint must call `manager.touch()` (or equivalent `last_active = time.time()`) in a `finally` block so the idle timer resets after generation completes, not when the model was loaded.
 - [ ] **Verify Unload**: Confirm verification scripts check that VRAM is released.
 
 ### 2. 📚 Documentation Updates

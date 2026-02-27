@@ -364,6 +364,7 @@ def process_async_task(task_id: str, request: ImageGenerationRequest):
             generation_tasks[task_id] = {"status": "failed", "error": str(e)}
         finally:
             is_generating = False
+            last_activity_time = time.time()
 
 @app.post("/v1/images/async_generate")
 def async_generate(request: ImageGenerationRequest, background_tasks: BackgroundTasks):
@@ -412,6 +413,7 @@ def process_async_edit_task(task_id: str, image_path: str, prompt: str):
             generation_tasks[task_id] = {"status": "failed", "error": str(e)}
         finally:
             is_generating = False
+            last_activity_time = time.time()
             # Clean up the temporary uploaded source file
             try:
                 if os.path.exists(image_path):
@@ -508,6 +510,7 @@ def generate_image_sync(request: ImageGenerationRequest):
             raise HTTPException(status_code=500, detail=str(e))
         finally:
             is_generating = False
+            last_activity_time = time.time()
 
 if __name__ == "__main__":
     logger.info(f"Vision Service starting (Sequential Offload) on {HOST}:{PORT}")
