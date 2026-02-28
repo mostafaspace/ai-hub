@@ -44,7 +44,9 @@ This skill provides the API specification for the LTX-2 Video server. Agents can
   "width": 768,
   "num_frames": 121,
   "frame_rate": 24.0,
-  "num_inference_steps": 40,
+  "num_inference_steps": 60,
+  "cfg_scale_video": 4.0,
+  "stg_scale_video": 1.2,
   "seed": 42
 }
 ```
@@ -92,7 +94,9 @@ Fetch the video from the `url` returned in the completed task.
 - `width` (Integer, default 768)
 - `num_frames` (Integer, default 121)
 - `frame_rate` (Float, default 25.0)
-- `num_inference_steps` (Integer, default 40)
+- `num_inference_steps` (Integer, default 60)
+- `cfg_scale_video` (Float, default 4.0)
+- `stg_scale_video` (Float, default 1.2)
 - `seed` (Integer, default 42)
 
 **Response:**
@@ -137,10 +141,10 @@ When a user sends an image via WhatsApp with a message like *"animate this"*:
 | `width` | ✅ | ✅ | 768 | Must be multiple of 64 |
 | `num_frames` | ✅ | ✅ | 121 | 49≈2s, 97≈4s, 121≈5s at 24fps |
 | `frame_rate` | ✅ | ✅ | 25.0 | fps of output video |
-| `num_inference_steps` | ✅ | ✅ | 40 | 20 = faster, 40 = better quality |
+| `num_inference_steps` | ✅ | ✅ | 60 | 40 = faster, 60+ = better quality |
 | `seed` | ✅ | ✅ | 42 | For reproducibility |
-| `cfg_scale_video` | ✅ | ✅ | 3.0 | Video guidance strength |
-| `stg_scale_video` | ✅ | ✅ | 1.0 | Spatiotemporal guidance |
+| `cfg_scale_video` | ✅ | ✅ | 4.0 | Video guidance strength |
+| `stg_scale_video` | ✅ | ✅ | 1.2 | Spatiotemporal guidance |
 | `cfg_scale_audio` | ✅ | — | 7.0 | Audio guidance strength |
 | `modality_scale` | ✅ | — | 3.0 | Audio/video cross-modal guidance |
 
