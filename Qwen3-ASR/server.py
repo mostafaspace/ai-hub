@@ -128,6 +128,11 @@ async def lifespan(app: FastAPI):
     manager.unload()
 
 app = FastAPI(title="Qwen3-ASR API", version="1.0", lifespan=lifespan)
+try:
+    from api_utils import GracefulJSONRoute
+    app.router.route_class = GracefulJSONRoute
+except ImportError as e:
+    logger.warning(f"Could not load GracefulJSONRoute: {e}")
 
 app.add_middleware(
     CORSMiddleware,

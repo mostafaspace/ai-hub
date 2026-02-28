@@ -181,6 +181,11 @@ async def lifespan(app: FastAPI):
     manager.unload_all()
 
 app = FastAPI(title="Qwen3 TTS Advanced API", lifespan=lifespan)
+try:
+    from api_utils import GracefulJSONRoute
+    app.router.route_class = GracefulJSONRoute
+except ImportError as e:
+    print(f"Warning: Could not load GracefulJSONRoute: {e}")
 
 # --- Schemas ---
 

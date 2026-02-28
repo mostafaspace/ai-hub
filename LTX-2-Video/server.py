@@ -148,6 +148,11 @@ async def lifespan(app: FastAPI):
     manager.unload_all()
 
 app = FastAPI(title="LTX-2 Video Generation API", lifespan=lifespan)
+try:
+    from api_utils import GracefulJSONRoute
+    app.router.route_class = GracefulJSONRoute
+except ImportError as e:
+    logger.warning(f"Could not load GracefulJSONRoute: {e}")
 
 # --- Schemas ---
 # For robust JSON handling, Pydantic defaults are set correctly.

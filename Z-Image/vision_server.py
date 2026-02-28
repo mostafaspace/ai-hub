@@ -266,6 +266,11 @@ async def lifespan(app: FastAPI):
     unload_model()
 
 app = FastAPI(title="Antigravity Vision Service", lifespan=lifespan)
+try:
+    from api_utils import GracefulJSONRoute
+    app.router.route_class = GracefulJSONRoute
+except ImportError as e:
+    logger.warning(f"Could not load GracefulJSONRoute: {e}")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 @app.get("/outputs/{filename}")
