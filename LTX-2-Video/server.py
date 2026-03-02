@@ -261,8 +261,8 @@ def _process_async_t2v(task_id: str, prompt: str, height: int, width: int,
                     video_guider_params=video_guider, audio_guider_params=audio_guider,
                     images=[]
                 )
-                url = _encode_and_save_video(video, audio, num_frames, frame_rate, task_id)
-
+            
+            url = _encode_and_save_video(video, audio, num_frames, frame_rate, task_id)
             video_tasks[task_id] = {"status": "completed", "url": url}
             logger.info(f"[Task {task_id}] T2V completed.")
         except Exception as e:
@@ -305,8 +305,8 @@ def _process_async_i2v(task_id: str, image_path: str, prompt: str,
                     video_guider_params=video_guider, audio_guider_params=audio_guider,
                     images=image_conditions
                 )
-                url = _encode_and_save_video(video, audio, num_frames, frame_rate, task_id)
-
+            
+            url = _encode_and_save_video(video, audio, num_frames, frame_rate, task_id)
             video_tasks[task_id] = {"status": "completed", "url": url}
             logger.info(f"[Task {task_id}] I2V completed.")
         except Exception as e:

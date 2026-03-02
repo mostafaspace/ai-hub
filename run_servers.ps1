@@ -8,20 +8,52 @@ $Host.UI.RawUI.WindowTitle = "Antigravity AI Server Launcher"
 # ============================================================
 $servers = @(
     @{
-        Name = "Qwen3 TTS Server"
-        Port = 8000
+        Name        = "Qwen3 TTS Server"
+        Port        = 8000
         Description = "Text-to-Speech"
-        Path = Join-Path $PSScriptRoot "Qwen3-TTS"
-        Command = "set HF_HOME=D:\hf_models&& pip install -r requirements.txt -q && python server.py"
-        UseUv = $false
+        Path        = Join-Path $PSScriptRoot "Qwen3-TTS"
+        Command     = "set HF_HOME=D:\hf_models&& pip install -r requirements.txt -q && python server.py"
+        UseUv       = $false
     },
     @{
-        Name = "ACE-Step Music Server"
-        Port = 8001
+        Name        = "ACE-Step Music Server"
+        Port        = 8001
         Description = "Music Generation"
-        Path = Join-Path $PSScriptRoot "ACE-Step-1.5"
-        Command = "acestep-api --host 0.0.0.0 --port 8001"
-        UseUv = $true
+        Path        = Join-Path $PSScriptRoot "ACE-Step-1.5"
+        Command     = "acestep-api --host 0.0.0.0 --port 8001"
+        UseUv       = $true
+    },
+    @{
+        Name        = "Qwen3 ASR Server"
+        Port        = 8002
+        Description = "Speech-to-Text"
+        Path        = Join-Path $PSScriptRoot "Qwen3-ASR"
+        Command     = "set HF_HOME=D:\hf_models && python server.py"
+        UseUv       = $false
+    },
+    @{
+        Name        = "Vision Service"
+        Port        = 8003
+        Description = "Z-Image Generation"
+        Path        = Join-Path $PSScriptRoot "Z-Image"
+        Command     = "set HF_HOME=D:\hf_models && python vision_server.py"
+        UseUv       = $false
+    },
+    @{
+        Name        = "LTX-2 Video Server"
+        Port        = 8004
+        Description = "Video Generation"
+        Path        = Join-Path $PSScriptRoot "LTX-2-Video"
+        Command     = "set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && set HF_HOME=D:\hf_models && python server.py"
+        UseUv       = $false
+    },
+    @{
+        Name        = "AI-Hub Orchestrator"
+        Port        = 9000
+        Description = "Unified Gateway"
+        Path        = Join-Path $PSScriptRoot "orchestrator"
+        Command     = "python server.py"
+        UseUv       = $false
     }
     # Add more servers here following the same pattern:
     # @{

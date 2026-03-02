@@ -75,7 +75,7 @@ def _resolve_device_map() -> str:
 
 
 DEVICE_MAP = _resolve_device_map()
-DEVICE = "cuda" if DEVICE_MAP.startswith("cuda") else "cpu"
+DEVICE = "cuda" if (DEVICE_MAP.startswith("cuda") or DEVICE_MAP == "auto") else "cpu"
 
 # Model paths (from config)
 MODEL_CUSTOM = config.TTS_MODEL_CUSTOM
@@ -94,6 +94,7 @@ class ModelManager:
         self.last_active = time.time()
         self.idle_timeout = idle_timeout
         self.check_interval = check_interval
+        self.is_generating = False
         self.lock = threading.RLock()
         
         # Start background monitor
@@ -108,7 +109,7 @@ class ModelManager:
             if self.current_model_type and (time.time() - self.last_active > self.idle_timeout):
                 with self.lock:
                     # Double-check under lock before unloading
-                    if self.current_model_type and (time.time() - self.last_active > self.idle_timeout):
+                    if self.current_model_type and not self.is_generating and (time.time() - self.last_active > self.idle_timeout):
                         print(f"Idle timeout reached ({self.idle_timeout}s). Unloading {self.current_model_type} model...")
                         self._unload_internal()
 
@@ -156,7 +157,7 @@ class ModelManager:
                 model_instance = Qwen3TTSModel.from_pretrained(
                     path,
                     device_map=device_arg,
-                    dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
+                    dtype=torch.bfloat16 if DEVICE == "cuda" else torch.float32,
                     # attn_implementation="flash_attention_2" # Enable if supported hardware
                 )
                 if hasattr(model_instance, 'config'):
@@ -323,6 +324,7 @@ def generate_speech(req: TTSSpeechRequest):
         
         print(f"Generating CustomVoice: '{req.input[:30]}...' Speaker: {req.voice}")
         
+        manager.is_generating = True
         wavs, sr = model.generate_custom_voice(
             text=req.input,
             language=req.language if req.language != "Auto" else "Auto",
@@ -336,6 +338,7 @@ def generate_speech(req: TTSSpeechRequest):
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
+        manager.is_generating = False
         manager.touch()
 
 @app.post("/v1/audio/tts")
@@ -354,6 +357,7 @@ def generate_voice_design(req: VoiceDesignRequest):
         
         print(f"Generating VoiceDesign: '{req.input[:30]}...' Prompt: {req.instruct[:30]}...")
         
+        manager.is_generating = True
         wavs, sr = model.generate_voice_design(
             text=req.input,
             language=req.language if req.language != "Auto" else None,
@@ -365,6 +369,7 @@ def generate_voice_design(req: VoiceDesignRequest):
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
+        manager.is_generating = False
         manager.touch()
 
 @app.post("/v1/audio/voice_clone")

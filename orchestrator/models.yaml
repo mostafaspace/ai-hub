@@ -1,0 +1,9 @@
+# Swappable Jarvis Model Registry
+# The Orchestrator reads this to know where to proxy incoming generic requests.
+
+backends:
+  tts: "http://127.0.0.1:8000"
+  music: "http://127.0.0.1:8001"
+  asr: "http://127.0.0.1:8002"
+  vision: "http://127.0.0.1:8003"
+  video: "http://127.0.0.1:8004"

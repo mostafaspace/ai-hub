@@ -8,6 +8,12 @@ AI-Hub is designed to be a modular, scalable, and easy-to-use ecosystem for AI-p
 
 ## ️ Current Services
 
+### 🌐 AI-Hub Orchestrator
+The central Gateway/Reverse-Proxy routing API requests to the appropriate backend model engines.
+- **Path**: [`/orchestrator`](./orchestrator)
+- **Primary Endpoint**: `http://<device-ip>:9000/v1/...`
+- **Features**: Transparent proxy routing (audio, vision, video), GPU crash prevention loops, and custom macro-skills like the `/v1/workflows/director` that stitches image, audio, and video together automatically using local FFmpeg.
+
 ### 🎙️ Qwen3 TTS
 High-fidelity text-to-speech generation powered by the latest Qwen models.
 - **Path**: [`/Qwen3-TTS`](./Qwen3-TTS)

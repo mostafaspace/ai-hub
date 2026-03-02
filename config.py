@@ -26,6 +26,7 @@ MUSIC_PORT = 8001
 ASR_PORT = 8002
 VISION_PORT = 8003
 VIDEO_PORT = 8004
+ORCHESTRATOR_PORT = 9000
 
 # --- Client / Test Configuration ---
 # IP and ports to use when running tests locally.

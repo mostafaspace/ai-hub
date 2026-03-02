@@ -24,7 +24,7 @@ import config
 
 def kill_port_occupants():
     """Kill any existing processes occupying our configured ports."""
-    ports = [config.TTS_PORT, config.MUSIC_PORT, config.ASR_PORT, config.VISION_PORT, config.VIDEO_PORT]
+    ports = [config.TTS_PORT, config.MUSIC_PORT, config.ASR_PORT, config.VISION_PORT, config.VIDEO_PORT, config.ORCHESTRATOR_PORT]
     pids_to_kill = set()
 
     for port in ports:
@@ -67,6 +67,12 @@ def kill_port_occupants():
 
 
 SERVERS = [
+    {
+        "name": "HUB",
+        "cwd": "orchestrator",
+        "cmd": ["python", "server.py"],
+        "color": "\033[97m",  # White
+    },
     {
         "name": "TTS",
         "cwd": "Qwen3-TTS", 
@@ -137,9 +143,9 @@ def start_servers():
         env["HF_HOME"] = config.HF_HOME # Ensure explicit HF_HOME
         env["PYTHONUNBUFFERED"] = "1"    # Force unbuffered output
         
-        # Force single GPU (device 0) for Music server to prevent tensor device mismatch
-        if server_conf["name"] == "MUSIC":
-            env["CUDA_VISIBLE_DEVICES"] = "0"
+        # Force single GPU (device 0) for ALL servers to prevent tensor device mismatch deadlocks
+        # and to prevent `accelerate` from sharding models across the disjoint 5090 and 4070 Ti
+        env["CUDA_VISIBLE_DEVICES"] = "0"
 
         # LTX-2 Video memory optimization
         if server_conf["name"] == "VIDEO":

@@ -21,6 +21,7 @@ echo   [2] ACE-Step Music Server    (Port 8001) - Music Generation
 echo   [3] Qwen3 ASR Server         (Port 8002) - Speech-to-Text
 echo   [4] Vision Service           (Port 8003) - Z-Image Generation
 echo   [5] LTX-2 Video Server       (Port 8004) - Video Generation
+echo   [6] AI-Hub Orchestrator      (Port 9000) - Unified Gateway
 echo.
 echo   [A] Start ALL Servers (with auto-restart)
 echo   [U] Unified Server (All in one window)
@@ -36,6 +37,7 @@ if /i "%choice%"=="2" goto ACESTEP
 if /i "%choice%"=="3" goto ASR
 if /i "%choice%"=="4" goto VISION
 if /i "%choice%"=="5" goto VIDEO
+if /i "%choice%"=="6" goto ORCHESTRATOR
 if /i "%choice%"=="A" goto START_ALL
 if /i "%choice%"=="U" goto UNIFIED
 if /i "%choice%"=="R" goto RESTART_ALL
@@ -76,6 +78,10 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8003.*LISTENING"') do (
 )
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8004.*LISTENING"') do (
     echo Killing process on port 8004 (PID: %%a)
+    taskkill /F /PID %%a >nul 2>&1
+)
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":9000.*LISTENING"') do (
+    echo Killing process on port 9000 (PID: %%a)
     taskkill /F /PID %%a >nul 2>&1
 )
 echo All servers stopped.
@@ -127,6 +133,15 @@ echo Video Server starting in new window!
 pause
 goto MENU
 
+:ORCHESTRATOR
+call :KILL_PORT 9000
+echo.
+echo Starting AI-Hub Orchestrator on port 9000...
+start "AI-Hub Orchestrator Gateway" cmd /k "cd /d %~dp0orchestrator && python server.py"
+echo Orchestrator starting in new window!
+pause
+goto MENU
+
 :RESTART_ALL
 call :KILL_ALL
 goto START_ALL
@@ -161,8 +176,12 @@ echo [4/5] Starting Vision Service (port 8003)...
 start "Vision Service" cmd /k "cd /d %~dp0Z-Image && set HF_HOME=D:\hf_models && python vision_server.py"
 timeout /t 3 >nul
 
-echo [5/5] Starting LTX-2 Video Server (port 8004)...
+echo [5/6] Starting LTX-2 Video Server (port 8004)...
 start "LTX-2 Video Server" cmd /k "cd /d %~dp0LTX-2-Video && set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && set HF_HOME=D:\hf_models && python server.py"
+timeout /t 3 >nul
+
+echo [6/6] Starting AI-Hub Orchestrator (port 9000)...
+start "AI-Hub Orchestrator Gateway" cmd /k "cd /d %~dp0orchestrator && python server.py"
 
 echo.
 echo ============================================================
@@ -174,6 +193,7 @@ echo     ACE-Step:  http://localhost:8001
 echo     ASR:       http://localhost:8002
 echo     Vision:    http://localhost:8003
 echo     Video:     http://localhost:8004
+echo     HUB:       http://localhost:9000
 echo.
 echo   Wait ~60 seconds for models to load, then test with:
 echo     python test_all_servers.py
