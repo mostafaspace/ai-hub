@@ -13,26 +13,31 @@ def fix_json_string(raw_str: str) -> str:
         return raw_str
     except json.JSONDecodeError:
         pass
-    
-    # 2. Fix Python booleans and unquoted single quotes
+
+    # 2. Try ast.literal_eval on the ORIGINAL string FIRST.
+    #    This handles single-quoted dicts/lists that also contain Python booleans
+    #    (e.g. {'key': True}), because Python's own parser understands True/False/None.
+    #    Applying boolean regexes before this step would turn True → true, making it
+    #    neither valid JSON nor valid Python, so ast.literal_eval can't recover it.
+    try:
+        parsed = ast.literal_eval(raw_str)
+        if isinstance(parsed, (dict, list)):
+            return json.dumps(parsed)
+    except Exception:
+        pass
+
+    # 3. Apply Python-to-JSON keyword fixes (True→true, False→false, None→null)
+    #    and retry JSON parsing. This covers double-quoted JSON that just has wrong keywords.
     fixed = re.sub(r'\bTrue\b', 'true', raw_str)
     fixed = re.sub(r'\bFalse\b', 'false', fixed)
     fixed = re.sub(r'\bNone\b', 'null', fixed)
-    
+
     try:
         json.loads(fixed)
         return fixed
     except json.JSONDecodeError:
         pass
-        
-    # 3. Fallback to ast.literal_eval for single-quoted dicts
-    try:
-        parsed_dict = ast.literal_eval(fixed)
-        if isinstance(parsed_dict, dict) or isinstance(parsed_dict, list):
-            return json.dumps(parsed_dict)
-    except Exception:
-        pass
-        
+
     # Return original if we can't fix it; FastAPI will throw 422 naturally
     return raw_str
 
@@ -59,11 +64,12 @@ class GracefulJSONRoute(APIRoute):
                             fixed_bytes = fixed_str.encode("utf-8")
                             request._body = fixed_bytes
                             async def receive():
-                                return {"type": "http.request", "body": fixed_bytes}
+                                return {"type": "http.request", "body": fixed_bytes, "more_body": False}
                             request._receive = receive
                 except Exception as e:
-                    # If reading body fails, ignore and let standard pipeline handle it
-                    pass
+                    # If reading body fails, log and let the standard pipeline handle it
+                    import logging
+                    logging.getLogger(__name__).warning(f"GracefulJSONRoute body fix failed: {e}")
                     
             return await original_route_handler(request)
             

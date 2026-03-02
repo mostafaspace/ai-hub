@@ -10,6 +10,7 @@ This skill provides the API specification for the LTX-2 Video server. Agents can
 ## Server Details
 
 - **Base URL**: `http://192.168.1.26:8004`
+- **OpenAPI Spec**: `openapi.yaml` (in this directory)
 
 > [!IMPORTANT]
 > **Timeout Setting**: The first request may take **60–120 seconds** to load the model. Set your HTTP client timeout accordingly.
@@ -231,3 +232,9 @@ You forgot the sugar." Pixar style acting and timing.
 ### Timeout
 
 - **First Request Slow**: The API loads models on demand. The first request can take 1–2 minutes.
+
+## Pre-flight & Health
+
+- **GET** `/health` — Returns `{"status": "running", "model_loaded": true/false}`
+- **POST** `/v1/internal/unload` — Manually unload model from VRAM to free resources
+

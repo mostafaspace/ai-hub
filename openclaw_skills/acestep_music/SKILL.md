@@ -112,3 +112,9 @@ Using the `url` from the polling result (e.g., `http://192.168.1.26:8001/v1/audi
 
 ### Generation Stuck on "Processing"
 -   **Wait Longer**: Complex prompts or high loads can take up to 2 minutes.
+
+## Pre-flight & Health
+
+- **GET** `/health` — Returns `{"status": "running", "model_loaded": true/false}`
+- **POST** `/v1/internal/unload` — Manually unload all models from VRAM to free resources
+

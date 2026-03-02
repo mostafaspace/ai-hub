@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI-Hub ⚡ Dashboard</title>
+  <meta name="description" content="AI-Hub — Real-time command center for managing AI model services.">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+</head>
+
+<body>
+
+  <!-- ====== HEADER ====== -->
+  <header class="header">
+    <div class="logo">
+      <span class="icon">⚡</span>
+      <span>AI-Hub</span>
+    </div>
+    <div class="header-right">
+      <span class="clock" id="clock"></span>
+      <div class="hub-badge online" id="hubBadge">
+        <span class="pulse"></span>
+        <span id="hubBadgeText">Hub Online</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ====== MAIN ====== -->
+  <main class="main">
+
+    <!-- Services Section -->
+    <div class="section-title">Services</div>
+    <div class="services-grid" id="servicesGrid">
+      <!-- Cards are rendered by app.js -->
+    </div>
+
+    <!-- Bottom Panels -->
+    <div class="bottom-panels">
+
+      <!-- Active Tasks -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Active Tasks</span>
+          <span class="panel-badge" id="taskCount">0 tasks</span>
+        </div>
+        <div class="panel-body" id="taskList">
+          <div class="empty-state">
+            <span class="empty-icon">📋</span>
+            <span>No recent tasks</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- System Log -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">System Log</span>
+          <span class="panel-badge" id="logBadge">live</span>
+        </div>
+        <div class="panel-body logs-body" id="systemLog">
+          <div class="log-line">
+            <span class="log-time">--:--:--</span>
+            <span class="log-msg">Waiting for dashboard to connect...</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Quick Tools -->
+    <div class="quick-tools">
+      <div class="section-title">Quick Tools</div>
+      <div class="quick-tools-grid">
+        <button class="tool-btn" onclick="launchAllServers()">
+          <span class="tool-icon">🚀</span> Start All Servers
+        </button>
+        <button class="tool-btn" onclick="openModal('tts')">
+          <span class="tool-icon">🎙️</span> Test TTS
+        </button>
+        <button class="tool-btn" onclick="openModal('image')">
+          <span class="tool-icon">🖼️</span> Generate Image
+        </button>
+        <button class="tool-btn" onclick="openModal('director')">
+          <span class="tool-icon">🎬</span> Run Director Workflow
+        </button>
+        <button class="tool-btn" onclick="runHealthCheck()">
+          <span class="tool-icon">❤️‍🩹</span> Health Check All
+        </button>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ====== MODAL OVERLAY ====== -->
+  <div class="modal-overlay" id="modalOverlay" onclick="closeModalOverlay(event)">
+    <div class="modal" id="modalContent">
+      <!-- Dynamically populated by app.js -->
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+
+</html>

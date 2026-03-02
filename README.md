@@ -6,7 +6,7 @@ Welcome to **AI-Hub**, the unified gateway for open source AI's suite of powerfu
 
 AI-Hub is designed to be a modular, scalable, and easy-to-use ecosystem for AI-powered creativity. Whether you're looking to generate expressive speech or compose unique musical tracks, AI-Hub brings these services together under one roof with a unified management system.
 
-## ️ Current Services
+## ⚡ Current Services
 
 ### 🌐 AI-Hub Orchestrator
 The central Gateway/Reverse-Proxy routing API requests to the appropriate backend model engines.
@@ -68,6 +68,26 @@ To support running multiple heavy models on consumer hardware (e.g., RTX 3090/40
 - If a model remains idle (default: 60 seconds), it is **automatically unloaded** from VRAM to make room for other services.
 - This allows you to host all services even if your total VRAM is less than the sum of all models.
 
+### 📊 Dashboard UI
+The Orchestrator includes a built-in real-time dashboard at `http://<device-ip>:9000/dashboard/`:
+- **Live service status** — see which services are Online, Idle (model unloaded), or Offline
+- **VRAM monitoring** — per-service GPU memory usage
+- **Quick Tools** — Health Check All, Unload All, Start All Servers buttons
+- **Service Actions** — Unload individual services directly from the UI
+
+### 🔧 Management API
+The Orchestrator exposes management endpoints for programmatic control:
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/v1/hub/services` | GET | Aggregated health status of all services |
+| `/v1/hub/unload/{service}` | POST | Unload a specific service's models from VRAM |
+| `/v1/hub/launch-all` | POST | Start all backend servers via `unified_server.py` |
+
+All backend services also expose consistent endpoints:
+- `GET /health` — Returns `{"status": "running", "model_loaded": true/false}`
+- `POST /v1/internal/unload` — Manually unload model from VRAM
+
 ### Overall Recommendation
 - **Minimum**: 8GB VRAM (Supports TTS and Music comfortably).
 - **Recommended**: 24GB VRAM (Supports TTS, Music, and ASR simultaneously).
@@ -102,13 +122,13 @@ The easiest way to start all services is using the unified launcher:
 ```cmd
 run_server.bat
 ```
-- **Option [U]**: Highly recommended! Starts all servers (TTS, Music, ASR, Vision) in a **single window** with unified, color-coded logging.
+- **Option [U]**: Highly recommended! Starts all servers (TTS, Music, ASR, Vision, Video) in a **single window** with unified, color-coded logging.
 - **Option [A]**: Starts all servers in separate popup windows with auto-restart.
 
 ### Verifying Installation
 Once the servers are up, you can run the unified health check script:
 ```bash
-python test_all_servers.py
+python tests/test_all_servers.py
 ```
 
 ---
@@ -120,9 +140,9 @@ AI-Hub is a living project with significant expansions planned. We are committed
 | Feature | Description | Status |
 | :--- | :--- | :--- |
 | **Vision API** | Image generation with Z-Image (text-to-image). | ✅ Done |
+| **Dashboard UI** | Real-time dashboard to monitor and manage all services. | ✅ Done |
 | **Omni-Chat** | Unified chat interface for LLM interactions. | 📅 Planned |
 | **Agent Workspace** | Infrastructure for autonomous AI agents. | 💡 Researching |
-| **Unified UI** | A single dashboard to monitor and interact with all hub services. | 🛤️ On Roadmap |
 
 ---
 
@@ -135,10 +155,11 @@ ai-hub/
 ├── Qwen3-ASR/         # Speech-to-text service (Port 8002)
 ├── Z-Image/           # Image generation service (Port 8003)
 ├── LTX-2-Video/       # Video generation service (Port 8004)
-├── openclaw_skills/   # Extensible skills for AI agents
+├── orchestrator/      # Orchestrator + Dashboard (Port 9000)
+├── openclaw_skills/   # API skills for remote AI agents
+├── tests/             # All test scripts
 ├── run_server.bat     # Centralized launcher menu
-├── unified_server.py  # Unified All-in-One process manager
-└── test_all_servers.py # Unified health check script
+└── unified_server.py  # Unified All-in-One process manager
 ```
 
 ## 🤝 Contributing

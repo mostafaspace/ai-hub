@@ -33,11 +33,13 @@ import torch
 import uvicorn
 import soundfile as sf
 import numpy as np
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body
+import asyncio
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List, Union, Literal
 from contextlib import asynccontextmanager
+from transformers.generation.streamers import BaseStreamer
 
 # Import Qwen3TTS
 # Ensure 'qwen-tts' is installed
@@ -83,8 +85,54 @@ MODEL_DESIGN = config.TTS_MODEL_DESIGN
 MODEL_BASE = config.TTS_MODEL_BASE
 
 import threading
-
 import gc
+from transformers.generation.streamers import BaseStreamer
+
+# --- Custom Real-Time Audio Streamer ---
+class Qwen3AudioStreamer(BaseStreamer):
+    """
+    Subclasses HuggingFace BaseStreamer to intercept audio codec tokens,
+    decode them, and pump raw PCM bytes into an asyncio.Queue for WebSockets.
+    """
+    def __init__(self, model, sample_rate: int = 24000):
+        self.model = model  # The Qwen3TTSModel instance
+        self.sample_rate = sample_rate
+        self.audio_queue = asyncio.Queue()
+        self.token_cache = []
+        # Qwen3 processes audio in frames. We need enough codec tokens to make a decent sized audio chunk.
+        self.chunk_size = 50 # Process every N tokens (experiment to find a balance between latency and stutter)
+        self.loop = asyncio.get_running_loop()
+        self.is_done = False
+        self.stream_count = 0
+
+    def put(self, value):
+        if len(value.shape) > 1:
+            value = value[0]
+            
+        self.token_cache.append(value.tolist())
+        
+        # If we have accumulated enough tokens for a chunk (modulo division so it streams every N tokens)
+        if len(self.token_cache) % self.chunk_size == 0:
+            target_device = self.model.model.device
+            codes_tensor = torch.tensor(self.token_cache).to(target_device) # Shape [length, 16]
+            wavs_all, _ = self.model.model.speech_tokenizer.decode([{"audio_codes": codes_tensor}])
+            
+            wav_chunk = wavs_all[0]
+            # Derive samples per token to calculate how much the end of the audio wave grew
+            samples_per_token = len(wav_chunk) // len(self.token_cache)
+            new_samples_len = samples_per_token * self.chunk_size
+            
+            audio_int16 = (wav_chunk[-new_samples_len:] * 32767).astype(np.int16)
+            pcm_bytes = audio_int16.tobytes()
+            
+            self.loop.call_soon_threadsafe(self.audio_queue.put_nowait, pcm_bytes)
+            self.stream_count += 1
+
+    def end(self):
+        """Called when generation finishes."""
+        self.is_done = True
+        self.loop.call_soon_threadsafe(self.audio_queue.put_nowait, None) # Poison pill
+
 # Global model cache to manage VRAM
 # Simple LRU-style: keep only one active model to be safe on VRAM
 class ModelManager:
@@ -272,8 +320,14 @@ def audio_to_stream(audio_data, sample_rate, fmt):
 
 @app.get("/health")
 def health_check():
-    return {"status": "running", "device": DEVICE, "device_map": DEVICE_MAP}
+    return {
+        "status": "running",
+        "device": DEVICE,
+        "device_map": DEVICE_MAP,
+        "model_loaded": manager.current_model_type is not None,
+    }
 
+@app.post("/v1/internal/unload")
 @app.get("/v1/internal/unload")
 def manual_unload():
     """Manually unload all models."""
@@ -368,6 +422,83 @@ def generate_voice_design(req: VoiceDesignRequest):
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        manager.is_generating = False
+        manager.touch()
+
+@app.websocket("/v1/audio/stream")
+async def websocket_stream_endpoint(websocket: WebSocket):
+    """
+    Real-Time Streaming WebSocket Endpoint.
+    1. Client connects.
+    2. Client sends JSON config `{"input": "hello", "voice": "Vivian"}`
+    3. Server starts generating in a background thread and pushes raw PCM int16 chunks incrementally down the socket.
+    """
+    await websocket.accept()
+    print("[WebSocket] Client connected for TTS stream.")
+    
+    try:
+        # Wait for config payload from client
+        config_data = await websocket.receive_json()
+        text = config_data.get("input", "")
+        voice = config_data.get("voice", "Vivian")
+        language = config_data.get("language", "Auto")
+        
+        if not text:
+            await websocket.send_json({"error": "No input text provided."})
+            await websocket.close()
+            return
+
+        print(f"[WebSocket] Streaming requested for voice: {voice}")
+        
+        # Prevent auto-unload deadlocks and load the model
+        model = manager.get_model("custom")
+        manager.is_generating = True
+        
+        # We assume sample rate is 24000 for Qwen3-TTS
+        streamer = Qwen3AudioStreamer(model, sample_rate=24000)
+        
+        # Offload 15s+ blocking PyTorch inference generation to background thread
+        def run_generation():
+            try:
+                # Modifying generate_custom_voice signature invocation to pass down streamer
+                model.generate_custom_voice(
+                    text=text,
+                    language=language if language != "Auto" else "Auto",
+                    speaker=voice,
+                    streamer=streamer, # The hook
+                    non_streaming_mode=False # VERY IMPORTANT for streaming to trigger
+                )
+            except Exception as e:
+                print(f"[WebSocket Generate Thread Error] {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                streamer.end()
+                
+        thread = threading.Thread(target=run_generation)
+        thread.start()
+        
+        # Consume the queue and pipe to websocket
+        while True:
+            chunk = await streamer.audio_queue.get()
+            if chunk is None:
+                # Poison pill received. Generation is complete.
+                break
+                
+            # Send binary PCM chunk to client directly
+            await websocket.send_bytes(chunk)
+            
+        print("[WebSocket] Stream complete. Connection gracefully closing.")
+        
+    except WebSocketDisconnect:
+        print("[WebSocket] Client disconnected abruptly before generation could finish.")
+    except Exception as e:
+        print(f"[WebSocket Error] {e}")
+        try:
+            await websocket.close(code=1011, reason=str(e))
+        except:
+            pass
     finally:
         manager.is_generating = False
         manager.touch()

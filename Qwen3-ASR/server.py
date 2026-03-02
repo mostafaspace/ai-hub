@@ -166,6 +166,13 @@ def health_check():
         "model_loaded": manager.model is not None
     }
 
+@app.post("/v1/internal/unload")
+@app.get("/v1/internal/unload")
+def manual_unload():
+    """Manually unload models to free VRAM."""
+    manager.unload()
+    return {"status": "models unloaded"}
+
 @app.post("/v1/audio/transcriptions")
 async def transcribe(
     file: UploadFile = File(...),

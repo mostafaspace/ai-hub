@@ -100,3 +100,9 @@ To generate speech with a custom designed voice:
 
 ### Timeout
 -   **First Request Slow**: The API loads models on demand. The first request can take 1-2 minutes.
+
+## Pre-flight & Health
+
+- **GET** `/health` — Returns `{"status": "running", "model_loaded": true/false}`
+- **POST** `/v1/internal/unload` — Manually unload model from VRAM to free resources
+

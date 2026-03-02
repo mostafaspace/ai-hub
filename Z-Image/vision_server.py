@@ -324,6 +324,13 @@ async def internal_status():
         "edit_loaded": edit_pipeline is not None
     }
 
+@app.post("/v1/internal/unload")
+@app.get("/v1/internal/unload")
+def manual_unload_endpoint():
+    """Manually unload all models to free VRAM."""
+    unload_model()
+    return {"status": "models unloaded"}
+
 generation_tasks = {}
 generation_lock = threading.Lock()
 

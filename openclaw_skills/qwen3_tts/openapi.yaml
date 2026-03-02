@@ -210,7 +210,7 @@ paths:
   /health:
     get:
       summary: Health Check
-      description: Check if the server is running.
+      description: Check if the server is running and whether models are loaded.
       operationId: healthCheck
       responses:
         '200':
@@ -223,3 +223,30 @@ paths:
                   status:
                     type: string
                     example: "running"
+                  model_loaded:
+                    type: boolean
+                    description: Whether the TTS model is currently loaded in VRAM.
+
+  /v1/internal/unload:
+    post:
+      summary: Unload Model
+      description: Manually unload the TTS model from VRAM to free resources.
+      operationId: unloadModel
+      responses:
+        '200':
+          description: Model unloaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+    get:
+      summary: Unload Model (GET)
+      description: Manually unload the TTS model from VRAM (GET variant).
+      operationId: unloadModelGet
+      responses:
+        '200':
+          description: Model unloaded
+

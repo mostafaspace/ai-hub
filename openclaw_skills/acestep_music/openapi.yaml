@@ -113,7 +113,7 @@ paths:
   /health:
     get:
       summary: Health Check
-      description: Check if the server is running.
+      description: Check if the server is running and whether models are loaded.
       operationId: healthCheck
       responses:
         '200':
@@ -125,3 +125,31 @@ paths:
                 properties:
                   status:
                     type: string
+                    example: "running"
+                  model_loaded:
+                    type: boolean
+                    description: Whether the music model is currently loaded in VRAM.
+
+  /v1/internal/unload:
+    post:
+      summary: Unload Model
+      description: Manually unload all models from VRAM to free resources.
+      operationId: unloadModel
+      responses:
+        '200':
+          description: Model unloaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+    get:
+      summary: Unload Model (GET)
+      description: Manually unload all models from VRAM (GET variant).
+      operationId: unloadModelGet
+      responses:
+        '200':
+          description: Model unloaded
+

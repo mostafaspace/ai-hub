@@ -1,4 +1,4 @@
-# Swappable Jarvis Model Registry
+# AI-Hub Model Registry
 # The Orchestrator reads this to know where to proxy incoming generic requests.
 
 backends:

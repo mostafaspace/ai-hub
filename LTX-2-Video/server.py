@@ -177,6 +177,7 @@ class VideoGenerationRequest(BaseModel):
 def health_check():
     return {"status": "running", "device": DEVICE, "vram_loaded": manager.pipeline is not None}
 
+@app.post("/v1/internal/unload")
 @app.get("/v1/internal/unload")
 def manual_unload():
     manager.unload_all()

@@ -1,0 +1,133 @@
+openapi: 3.0.0
+info:
+  title: Qwen3 ASR API
+  description: API for speech-to-text transcription and audio analysis using Qwen2-Audio-7B.
+  version: 1.0.0
+servers:
+  - url: http://192.168.1.26:8002
+    description: Local Qwen3 ASR Server
+
+paths:
+  /v1/audio/transcriptions:
+    post:
+      summary: Transcribe Audio
+      description: Transcribe audio files to text (Speech-to-Text).
+      operationId: transcribeAudio
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The audio file to transcribe (WAV, MP3, etc.).
+                prompt:
+                  type: string
+                  description: Optional context or instruction for guided ASR.
+                language:
+                  type: string
+                  description: Target language hint.
+              required:
+                - file
+      responses:
+        '200':
+          description: Transcribed text
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text:
+                    type: string
+                    description: The transcribed text.
+
+  /v1/chat/completions:
+    post:
+      summary: Audio Chat / Analysis
+      description: OpenAI-compatible chat endpoint with audio content support. Audio can be provided as a URL or base64 data URI.
+      operationId: audioChat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      role:
+                        type: string
+                        enum: [system, user, assistant]
+                      content:
+                        description: String or array of content parts (text, audio).
+              required:
+                - messages
+      responses:
+        '200':
+          description: Chat completion response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  choices:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        message:
+                          type: object
+                          properties:
+                            role:
+                              type: string
+                            content:
+                              type: string
+
+  /health:
+    get:
+      summary: Health Check
+      description: Check if the server is running and whether models are loaded.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "running"
+                  model_loaded:
+                    type: boolean
+                    description: Whether the ASR model is currently loaded in VRAM.
+
+  /v1/internal/unload:
+    post:
+      summary: Unload Model
+      description: Manually unload the ASR model from VRAM to free resources.
+      operationId: unloadModel
+      responses:
+        '200':
+          description: Model unloaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+    get:
+      summary: Unload Model (GET)
+      description: Manually unload the ASR model from VRAM (GET variant).
+      operationId: unloadModelGet
+      responses:
+        '200':
+          description: Model unloaded

@@ -10,6 +10,7 @@ This skill allows you to interact with the Qwen3-ASR server (backed by Qwen2-Aud
 ## Server Details
 - **URL**: `http://192.168.1.26:8002` (Default)
 - **Model**: `Qwen/Qwen2-Audio-7B-Instruct`
+- **OpenAPI Spec**: `openapi.yaml` (in this directory)
 - **Cold Start**: Service sleeps after inactivity. Expect 5-10s delay on first request.
 
 ## Endpoints
@@ -59,3 +60,9 @@ messages = [
 response = requests.post(url, json={"messages": messages})
 print(response.json())
 ```
+
+## Pre-flight & Health
+
+- **GET** `/health` — Returns `{"status": "running", "model_loaded": true/false}`
+- **POST** `/v1/internal/unload` — Manually unload model from VRAM to free resources
+

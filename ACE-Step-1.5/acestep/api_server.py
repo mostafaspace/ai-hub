@@ -2462,14 +2462,16 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health_check():
         """Health check endpoint for service status."""
-        return _wrap_response({
-            "status": "ok",
+        return {
+            "status": "running",
+            "model_loaded": getattr(app.state, "_initialized", False),
             "service": "ACE-Step API",
             "version": "1.0",
-        })
+        }
 
+    @app.post("/v1/internal/unload")
     @app.get("/v1/internal/unload")
-    async def manual_unload(_: None = Depends(verify_api_key)):
+    async def manual_unload():
         """Manually unload all models to free VRAM."""
         print("[Manual Unload] Unloading all models...")
         
@@ -2511,6 +2513,7 @@ def create_app() -> FastAPI:
                     print(f"Error unloading LLM: {e}")
                 app.state._llm_initialized = False
         
+        import torch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             
@@ -2721,6 +2724,7 @@ def create_app() -> FastAPI:
         media_type = media_types.get(ext, "audio/mpeg")
 
         return FileResponse(resolved_path, media_type=media_type)
+
 
     return app
 

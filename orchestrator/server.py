@@ -4,8 +4,11 @@ import yaml
 import httpx
 import uuid
 import asyncio
+import time
+from datetime import datetime, timezone
 from fastapi import FastAPI, Request, Response, HTTPException
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -47,7 +50,7 @@ async def lifespan(app: FastAPI):
     yield
     await http_client.aclose()
 
-app = FastAPI(title="AI-Hub Orchestrator (Jarvis)", version="1.0", lifespan=lifespan)
+app = FastAPI(title="AI-Hub Orchestrator", version="1.0", lifespan=lifespan)
 
 if GracefulJSONRoute:
     app.router.route_class = GracefulJSONRoute
@@ -59,6 +62,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Mount Dashboard Static Files ---
+DASHBOARD_DIR = os.path.join(os.path.dirname(__file__), "dashboard")
+if os.path.isdir(DASHBOARD_DIR):
+    app.mount("/dashboard", StaticFiles(directory=DASHBOARD_DIR, html=True), name="dashboard")
+    print(f"Dashboard mounted from {DASHBOARD_DIR}")
+
+# --- Task Tracking (in-memory) ---
+recent_tasks = []  # List of dicts: {task_id, workflow, status, started_at, finished_at}
+MAX_TRACKED_TASKS = 50
+
+def record_task(task_id, workflow, status, started_at=None):
+    """Record or update a task in the recent tasks list."""
+    for t in recent_tasks:
+        if t["task_id"] == task_id:
+            t["status"] = status
+            if status in ("COMPLETED", "FAILED"):
+                t["finished_at"] = time.time()
+            return
+    recent_tasks.insert(0, {
+        "task_id": task_id,
+        "workflow": workflow,
+        "status": status,
+        "started_at": started_at or time.time(),
+        "finished_at": None,
+    })
+    if len(recent_tasks) > MAX_TRACKED_TASKS:
+        recent_tasks.pop()
 
 
 # --- MACRO SKILLS: The Content Director ---
@@ -85,14 +116,16 @@ async def content_director(req: DirectorRequest, request: Request):
     work_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "director_outputs", task_id))
     os.makedirs(work_dir, exist_ok=True)
     
-    # Fast polling interval
+    # Fast polling interval and maximum deadline to prevent infinite hangs
     poll_interval = 2.0
+    POLL_DEADLINE = 30 * 60  # 30 minutes max per generation step
     
     print(f"[Director] Started Workflow {task_id}")
+    record_task(task_id, "content_director", "RUNNING")
 
     try:
-        # --- STEP 1 & 2: Generate Image and Audio concurrently ---
-        print("[Director] Requesting Vision and Audio generation concurrently...")
+        # NOTE: TTS is done first (sequential) because it's a cold-boot and fast relative to video.
+        print("[Director] Requesting TTS and Vision generation...")
         
         vision_url = f"{BACKENDS['vision']}/v1/images/async_generate"
         vision_payload = {
@@ -130,20 +163,19 @@ async def content_director(req: DirectorRequest, request: Request):
         vision_task_id = vision_resp.json().get("task_id")
         print(f"[Director] Vision task started: {vision_task_id}. Polling...")
         
-        # Poll Vision
+        # Poll Vision with a deadline to avoid infinite hang
         image_url = None
+        deadline = asyncio.get_event_loop().time() + POLL_DEADLINE
         while True:
+            if asyncio.get_event_loop().time() > deadline:
+                raise Exception(f"Vision task {vision_task_id} timed out after {POLL_DEADLINE}s")
             v_poll = await http_client.get(f"{BACKENDS['vision']}/v1/images/tasks/{vision_task_id}")
             v_data = v_poll.json()
             if v_data["status"] == "COMPLETED" or v_data["status"] == "completed":
-                # Ensure we have the local path or data. Vision currently returns URLs.
-                # Assuming Vision and Orchestrator are on the same machine, we can grab the relative or absolute path 
-                # or download the URL result. Let's download it to be safe.
                 # Z-Image returns `data` array containing dicts with `url`
                 image_url = v_data["data"][0]["url"]
                 # Convert relative URL to full if needed
                 if image_url.startswith("/"):
-                    # Extract base from BACKENDS
                     image_url = f"{BACKENDS['vision']}{image_url}"
                 break
             elif v_data["status"] == "FAILED" or v_data["status"] == "failed":
@@ -177,25 +209,27 @@ async def content_director(req: DirectorRequest, request: Request):
         vid_task_id = vid_init.json().get("task_id")
         print(f"[Director] Video task started: {vid_task_id}. Polling...")
         
-        # Poll Video
-        raw_video_url = None
+        # Poll Video with a deadline — LTX-2 can take many minutes
+        # LTX video tasks return a flat dict: {"status": "completed", "url": "http://..."}
+        raw_video_path = None
+        deadline = asyncio.get_event_loop().time() + POLL_DEADLINE
         while True:
+            if asyncio.get_event_loop().time() > deadline:
+                raise Exception(f"Video task {vid_task_id} timed out after {POLL_DEADLINE}s")
             vid_poll = await http_client.get(f"{BACKENDS['video']}/v1/video/tasks/{vid_task_id}")
             vid_data = vid_poll.json()
             if vid_data["status"] == "completed":
-                # LTX-2 returns local absolute paths usually, or URLs.
-                local_path = vid_data["output"].get("local_path")
-                raw_video_url = vid_data["output"].get("url")
-                
-                # If local_path exists, use it direct. Else fallback to downloading from URL.
-                if local_path and os.path.exists(local_path):
-                    raw_video_path = local_path
-                else:
-                    target_url = raw_video_url if raw_video_url.startswith("http") else f"{BACKENDS['video']}{raw_video_url}"
-                    vid_download = await http_client.get(target_url)
-                    raw_video_path = os.path.join(work_dir, "raw_video.mp4")
-                    with open(raw_video_path, 'wb') as f:
-                        f.write(vid_download.content)
+                # LTX-2 Video returns a flat dict with a "url" key (served via /outputs/{filename}).
+                # There is no nested "output" key and no "local_path" key in the current server impl.
+                video_result_url = vid_data.get("url")
+                if not video_result_url:
+                    raise Exception(f"Video task completed but returned no URL: {vid_data}")
+                # Build a fully-qualified URL if relative
+                target_url = video_result_url if video_result_url.startswith("http") else f"{BACKENDS['video']}{video_result_url}"
+                vid_download = await http_client.get(target_url)
+                raw_video_path = os.path.join(work_dir, "raw_video.mp4")
+                with open(raw_video_path, 'wb') as f:
+                    f.write(vid_download.content)
                 break
             elif vid_data["status"] == "failed":
                 raise Exception(f"Video task failed: {vid_data.get('error')}")
@@ -216,6 +250,7 @@ async def content_director(req: DirectorRequest, request: Request):
             
         print(f"[Director] Workflow complete! {final_video_path}")
         
+        record_task(task_id, "content_director", "COMPLETED")
         return JSONResponse(status_code=200, content={
             "task_id": task_id,
             "status": "COMPLETED",
@@ -227,6 +262,7 @@ async def content_director(req: DirectorRequest, request: Request):
     except Exception as e:
         import traceback
         traceback.print_exc()
+        record_task(task_id, "content_director", "FAILED")
         return JSONResponse(status_code=500, content={"error": str(e), "task_id": task_id})
 
 
@@ -317,22 +353,157 @@ async def route_chat(request: Request):
         raise HTTPException(status_code=503, detail="ASR Backend not configured.")
     return await proxy_request(request, BACKENDS["asr"])
 
-# Generic pass-through for anything else (optional, maybe too open, but good for outputs)
+# --- DASHBOARD API ENDPOINTS ---
+
+def _time_ago(ts):
+    """Convert a unix timestamp to a human-readable 'X ago' string."""
+    if ts is None:
+        return ""
+    delta = int(time.time() - ts)
+    if delta < 60:
+        return f"{delta}s ago"
+    elif delta < 3600:
+        return f"{delta // 60}m ago"
+    elif delta < 86400:
+        return f"{delta // 3600}h ago"
+    return f"{delta // 86400}d ago"
+
+@app.get("/v1/hub/services")
+async def hub_services():
+    """
+    Aggregated health check: polls all backends in parallel
+    and returns a unified status object for the dashboard.
+    """
+    results = {}
+
+    async def check_backend(key, url):
+        try:
+            resp = await http_client.get(f"{url}/health", timeout=3.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                # Determine if model is loaded (varies by backend)
+                model_loaded = data.get("model_loaded",
+                    data.get("vram_loaded",
+                    data.get("t2i_loaded", True)))
+                results[key] = {
+                    "status": "online",
+                    "model_loaded": model_loaded,
+                    "health_data": data,
+                }
+            else:
+                results[key] = {"status": "offline"}
+        except Exception:
+            results[key] = {"status": "offline"}
+
+        # Try to get VRAM info from /v1/internal/status if available
+        if results[key]["status"] == "online":
+            try:
+                sr = await http_client.get(f"{url}/v1/internal/status", timeout=2.0)
+                if sr.status_code == 200:
+                    sdata = sr.json()
+                    if "vram_used_gb" in sdata:
+                        results[key]["vram_used_gb"] = sdata["vram_used_gb"]
+                    if "vram_total_gb" in sdata:
+                        results[key]["vram_total_gb"] = sdata["vram_total_gb"]
+            except Exception:
+                pass
+
+    tasks = [check_backend(key, url) for key, url in BACKENDS.items()]
+    await asyncio.gather(*tasks)
+
+    return {"services": results}
+
+
+@app.get("/v1/hub/tasks")
+async def hub_tasks():
+    """
+    Returns recent workflow tasks for the dashboard task feed.
+    """
+    formatted = []
+    for t in recent_tasks:
+        duration = ""
+        if t["finished_at"] and t["started_at"]:
+            secs = int(t["finished_at"] - t["started_at"])
+            mins = secs // 60
+            duration = f"{mins}m {secs % 60}s" if mins > 0 else f"{secs}s"
+        formatted.append({
+            "task_id": t["task_id"],
+            "workflow": t["workflow"],
+            "status": t["status"],
+            "duration": duration,
+            "time_ago": _time_ago(t["started_at"]),
+        })
+    return {"tasks": formatted}
+
+
+@app.post("/v1/hub/unload/{service}")
+async def hub_unload(service: str):
+    """
+    Send an unload command to a backend service.
+    Tries POST /v1/internal/unload, falls back to message.
+    """
+    if service not in BACKENDS:
+        raise HTTPException(status_code=404, detail=f"Unknown service: {service}")
+
+    url = f"{BACKENDS[service]}/v1/internal/unload"
+    try:
+        resp = await http_client.post(url, timeout=5.0)
+        if resp.status_code == 200:
+            return {"message": f"{service} model unloaded successfully."}
+        else:
+            return {"message": f"{service} responded with status {resp.status_code}. Endpoint may not be supported yet."}
+    except Exception as e:
+        return {"message": f"Could not reach {service} unload endpoint: {str(e)}"}
+
+
+# --- Track launched subprocess ---
+_launched_process = None
+
+@app.post("/v1/hub/launch-all")
+async def hub_launch_all():
+    """
+    Launch all backend servers via unified_server.py as a subprocess.
+    The orchestrator itself is already running, so this only starts the backends.
+    """
+    global _launched_process
+    import subprocess as sp
+
+    # Check if already launched
+    if _launched_process is not None and _launched_process.poll() is None:
+        return {"message": "Servers are already launching / running."}
+
+    unified_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "unified_server.py"))
+    if not os.path.exists(unified_script):
+        raise HTTPException(status_code=404, detail="unified_server.py not found.")
+
+    try:
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        _launched_process = sp.Popen(
+            [sys.executable, unified_script],
+            cwd=os.path.dirname(unified_script),
+            env=env,
+            stdout=sp.DEVNULL,
+            stderr=sp.DEVNULL,
+        )
+        return {"message": f"unified_server.py launched (PID {_launched_process.pid}). Services will come online shortly."}
+    except Exception as e:
+        return {"message": f"Failed to launch: {str(e)}"}
+
+
+# Generic pass-through for anything else
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def catch_all(request: Request, path: str):
-    # Route /outputs/ to specific servers based on file prefixes if desired, 
-    # but currently all servers use their own /outputs/. We can just pick vision as default for now 
-    # or return a generic hub status.
-    if path == "health" or path == "":
-        return {"status": "ok", "message": "AI-Hub Swappable Jarvis Orchestrator is running.", "registry": BACKENDS}
-        
-    # If it's an /outputs/ request, we might need a mapping. Usually the URL given to the client 
-    # comes from the server itself. To support the hub, servers should ideally return full URLs, 
-    # or we mount a shared network drive. For now, proxying outputs is complex without a shared directory.
-    # We will just raise 404 for unmapped endpoints.
+    # Root: redirect to dashboard
+    if path == "" or path == "/":
+        return RedirectResponse(url="/dashboard/", status_code=302)
+
+    if path == "health":
+        return {"status": "ok", "message": "AI-Hub Orchestrator is running.", "registry": BACKENDS}
+
     raise HTTPException(status_code=404, detail=f"Orchestrator route not defined for path: {path}")
 
 if __name__ == "__main__":
     port = getattr(config, "ORCHESTRATOR_PORT", 9000)
-    print(f"Starting Swappable Jarvis Orchestrator on {config.HOST}:{port}")
+    print(f"Starting AI-Hub Orchestrator on {config.HOST}:{port}")
     uvicorn.run(app, host=config.HOST, port=port)

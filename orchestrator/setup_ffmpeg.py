@@ -32,10 +32,14 @@ def setup_ffmpeg():
                 source_exe = os.path.join(root, "ffmpeg.exe")
                 shutil.move(source_exe, ffmpeg_exe)
                 print(f"Successfully moved ffmpeg.exe to {ffmpeg_exe}")
-                break
+                return ffmpeg_exe
+                
+        # If we reach here, ffmpeg.exe was not found inside the archive
+        raise RuntimeError("ffmpeg.exe not found inside the downloaded archive.")
                 
     except Exception as e:
         print(f"Failed to setup FFmpeg: {e}")
+        return None
     finally:
         # Cleanup
         if os.path.exists(ZIP_PATH):

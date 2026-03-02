@@ -22,7 +22,7 @@ async def test_orchestrator():
                 
             # 2. Test TTS Routing (Assuming TTS is running, but even if not, we should get 502 Bad Gateway instead of 404 Not Found)
             print("Testing TTS proxy route...")
-            tts_payload = {"input": "Testing the swappable Jarvis architecture!", "voice": "Vivian"}
+            tts_payload = {"input": "Testing the AI-Hub architecture!", "voice": "Vivian"}
             resp = await client.post(f"{orchestrator_url}/v1/audio/speech", json=tts_payload)
             if resp.status_code in [200, 502, 422]: 
                 # 200 = Success, 502 = Proxy logic worked but backend is down, 422 = Backend rejected. All mean proxy matched.

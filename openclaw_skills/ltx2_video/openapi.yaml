@@ -1,0 +1,192 @@
+openapi: 3.0.0
+info:
+  title: LTX-2 Video API
+  description: API for text-to-video and image-to-video generation using the LTX-2 model.
+  version: 1.0.0
+servers:
+  - url: http://192.168.1.26:8004
+    description: Local LTX-2 Video Server
+
+paths:
+  /v1/video/async_t2v:
+    post:
+      summary: Async Text-to-Video
+      description: Submit a text-to-video generation task. Returns a task_id for polling.
+      operationId: asyncTextToVideo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt:
+                  type: string
+                  description: Detailed description of the video to generate.
+                height:
+                  type: integer
+                  default: 512
+                  description: Video height (multiple of 64).
+                width:
+                  type: integer
+                  default: 768
+                  description: Video width (multiple of 64).
+                num_frames:
+                  type: integer
+                  default: 121
+                  description: Number of frames (49≈2s, 97≈4s, 121≈5s at 24fps).
+                frame_rate:
+                  type: number
+                  default: 25.0
+                num_inference_steps:
+                  type: integer
+                  default: 60
+                cfg_scale_video:
+                  type: number
+                  default: 4.0
+                stg_scale_video:
+                  type: number
+                  default: 1.2
+                seed:
+                  type: integer
+                  default: 42
+              required:
+                - prompt
+      responses:
+        '200':
+          description: Task created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id:
+                    type: string
+                  status:
+                    type: string
+                  message:
+                    type: string
+
+  /v1/video/async_i2v:
+    post:
+      summary: Async Image-to-Video
+      description: Submit an image-to-video generation task. Returns a task_id for polling.
+      operationId: asyncImageToVideo
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                prompt:
+                  type: string
+                  description: Description of desired motion and scene.
+                image:
+                  type: string
+                  format: binary
+                  description: Input image to animate.
+                height:
+                  type: integer
+                  default: 512
+                width:
+                  type: integer
+                  default: 768
+                num_frames:
+                  type: integer
+                  default: 121
+                frame_rate:
+                  type: number
+                  default: 25.0
+                num_inference_steps:
+                  type: integer
+                  default: 60
+                seed:
+                  type: integer
+                  default: 42
+              required:
+                - prompt
+                - image
+      responses:
+        '200':
+          description: Task created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id:
+                    type: string
+                  status:
+                    type: string
+
+  /v1/video/tasks/{task_id}:
+    get:
+      summary: Poll Task Status
+      description: Check the status of a video generation task.
+      operationId: pollTaskStatus
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [processing, completed, failed]
+                  url:
+                    type: string
+                    description: Download URL (when completed).
+                  error:
+                    type: string
+                    description: Error message (when failed).
+
+  /health:
+    get:
+      summary: Health Check
+      description: Check if the server is running and whether models are loaded.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "running"
+                  model_loaded:
+                    type: boolean
+
+  /v1/internal/unload:
+    post:
+      summary: Unload Model
+      description: Manually unload the video model from VRAM to free resources.
+      operationId: unloadModel
+      responses:
+        '200':
+          description: Model unloaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+    get:
+      summary: Unload Model (GET)
+      description: Manually unload the video model from VRAM (GET variant).
+      operationId: unloadModelGet
+      responses:
+        '200':
+          description: Model unloaded
