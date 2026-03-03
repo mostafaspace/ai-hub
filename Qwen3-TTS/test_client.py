@@ -19,13 +19,14 @@ def test_custom_voice():
     payload = {
         "input": "This is a test of the Qwen3 Custom Voice model. It should sound natural.",
         "voice": "Vivian",
-        "language": "Auto"
+        "language": "English",
+        "response_format": "wav"
     }
     start = time.time()
     try:
         response = requests.post(url, json=payload, stream=True)
         print(f"Time: {time.time() - start:.2f}s")
-        save_audio(response, "output_custom.mp3")
+        save_audio(response, "output_custom.wav")
     except Exception as e:
         print(f"Failed: {e}")
 
@@ -35,13 +36,14 @@ def test_voice_design():
     payload = {
         "input": "I am a designed voice. I was created from a text description!",
         "instruct": "A deep, robotic male voice with a slow and echoing tone.",
-        "language": "English"
+        "language": "English",
+        "response_format": "wav"
     }
     start = time.time()
     try:
         response = requests.post(url, json=payload, stream=True)
         print(f"Time: {time.time() - start:.2f}s")
-        save_audio(response, "output_design.mp3")
+        save_audio(response, "output_design.wav")
     except Exception as e:
         print(f"Failed: {e}")
 
@@ -50,7 +52,7 @@ def test_voice_clone():
     url = f"{BASE_URL}/v1/audio/voice_clone"
     
     # We need a reference file. Let's use the custom voice output if it exists, or dummy.
-    ref_file = "output_custom.mp3"
+    ref_file = "output_custom.wav"
     if not os.path.exists(ref_file):
         print("Skipping clone test: No reference audio found (run custom voice test first).")
         return
@@ -58,7 +60,8 @@ def test_voice_clone():
     data = {
         "text": "This voice is cloned from the previous sample. How does it match?",
         "ref_text": "This is a test of the Qwen3 Custom Voice model. It should sound natural.", # Matches content of ref_file usually improves quality
-        "language": "English"
+        "language": "English",
+        "response_format": "wav"
     }
     
     files = {
@@ -69,7 +72,7 @@ def test_voice_clone():
     try:
         response = requests.post(url, data=data, files=files, stream=True)
         print(f"Time: {time.time() - start:.2f}s")
-        save_audio(response, "output_clone.mp3")
+        save_audio(response, "output_clone.wav")
     except Exception as e:
         print(f"Failed: {e}")
 

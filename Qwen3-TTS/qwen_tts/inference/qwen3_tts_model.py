@@ -115,7 +115,7 @@ class Qwen3TTSModel:
                 f"AutoModel returned {type(model)}, expected Qwen3TTSForConditionalGeneration. "
             )
 
-        processor = AutoProcessor.from_pretrained(pretrained_model_name_or_path)
+        processor = AutoProcessor.from_pretrained(pretrained_model_name_or_path, fix_mistral_regex=True,)
 
         generate_defaults = model.generate_config
         return cls(model=model, processor=processor, generate_defaults=generate_defaults)
@@ -736,6 +736,7 @@ class Qwen3TTSModel:
         language: Union[str, List[str]] = None,
         instruct: Optional[Union[str, List[str]]] = None,
         non_streaming_mode: bool = True,
+        audio_streamer = None,
         **kwargs,
     ) -> Tuple[List[np.ndarray], int]:
         """
@@ -825,6 +826,8 @@ class Qwen3TTSModel:
                 instruct_ids.append(self._tokenize_texts([self._build_instruct_text(ins)])[0])
 
         gen_kwargs = self._merge_generate_kwargs(**kwargs)
+        if audio_streamer is not None:
+            gen_kwargs["streamer"] = audio_streamer
 
         talker_codes_list, _ = self.model.generate(
             input_ids=input_ids,
@@ -834,6 +837,9 @@ class Qwen3TTSModel:
             non_streaming_mode=non_streaming_mode,
             **gen_kwargs,
         )
+
+        if audio_streamer is not None:
+            return [], self.model.speech_tokenizer.config.output_sample_rate
 
         wavs, fs = self.model.speech_tokenizer.decode([{"audio_codes": c} for c in talker_codes_list])
         return wavs, fs

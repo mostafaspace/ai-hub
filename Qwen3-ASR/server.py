@@ -166,6 +166,14 @@ def health_check():
         "model_loaded": manager.model is not None
     }
 
+@app.get("/v1/internal/status")
+def internal_status():
+    return {
+        "status": "idle",
+        "model_loaded": manager.model is not None,
+        "device": DEVICE,
+    }
+
 @app.post("/v1/internal/unload")
 @app.get("/v1/internal/unload")
 def manual_unload():

@@ -73,11 +73,29 @@ def _resolve_device_map() -> str:
     if env_device:
         return env_device.strip()
 
-    return config.DEVICE_MAP_DEFAULT
+    default_device = str(config.DEVICE_MAP_DEFAULT).strip()
+    if default_device == "auto" and torch.cuda.is_available():
+        # Auto-sharding frequently places parts of Qwen3-TTS on multiple GPUs,
+        # which can trigger cross-device tensor errors in generation.
+        return "cuda:0"
+    return default_device
 
 
 DEVICE_MAP = _resolve_device_map()
 DEVICE = "cuda" if (DEVICE_MAP.startswith("cuda") or DEVICE_MAP == "auto") else "cpu"
+
+def _resolve_tts_dtype() -> torch.dtype:
+    env_dtype = os.getenv("QWEN_TTS_DTYPE", "").strip().lower()
+    if env_dtype in {"float16", "fp16", "half"}:
+        return torch.float16
+    if env_dtype in {"bfloat16", "bf16"}:
+        return torch.bfloat16
+    if env_dtype in {"float32", "fp32"}:
+        return torch.float32
+    # Qwen models MUST use bfloat16 to avoid overflowing hidden states. float16 results in static gibberish.
+    return torch.bfloat16 if DEVICE == "cuda" else torch.float32
+
+TTS_DTYPE = _resolve_tts_dtype()
 
 # Model paths (from config)
 MODEL_CUSTOM = config.TTS_MODEL_CUSTOM
@@ -122,12 +140,13 @@ class Qwen3AudioStreamer(BaseStreamer):
             samples_per_token = len(wav_chunk) // len(self.token_cache)
             new_samples_len = samples_per_token * self.chunk_size
             
-            audio_int16 = (wav_chunk[-new_samples_len:] * 32767).astype(np.int16)
+            audio_data = wav_chunk[-new_samples_len:]
+            audio_data = np.clip(audio_data, -1.0, 1.0)
+            audio_int16 = (audio_data * 32767).astype(np.int16)
             pcm_bytes = audio_int16.tobytes()
             
             self.loop.call_soon_threadsafe(self.audio_queue.put_nowait, pcm_bytes)
             self.stream_count += 1
-
     def end(self):
         """Called when generation finishes."""
         self.is_done = True
@@ -205,7 +224,7 @@ class ModelManager:
                 model_instance = Qwen3TTSModel.from_pretrained(
                     path,
                     device_map=device_arg,
-                    dtype=torch.bfloat16 if DEVICE == "cuda" else torch.float32,
+                    dtype=TTS_DTYPE,
                     # attn_implementation="flash_attention_2" # Enable if supported hardware
                 )
                 if hasattr(model_instance, 'config'):
@@ -253,6 +272,9 @@ class VoiceDesignRequest(BaseModel):
 
 # --- Helper ---
 def audio_to_stream(audio_data, sample_rate, fmt):
+    # Normalize expected model output range before integer conversion.
+    audio_data = np.clip(np.asarray(audio_data, dtype=np.float32), -1.0, 1.0)
+
     # If MP3 requested and FFmpeg available, use pydub
     if fmt == "mp3" and HAS_FFMPEG:
         try:
@@ -274,6 +296,7 @@ def audio_to_stream(audio_data, sample_rate, fmt):
             return StreamingResponse(buffer, media_type="audio/mpeg")
         except Exception as e:
             print(f"MP3 Conversion Failed: {e}. Falling back to WAV.")
+            fmt = "wav"
 
     # OGG (Opus) Support for WhatsApp
     if fmt == "ogg" and HAS_FFMPEG:
@@ -295,6 +318,7 @@ def audio_to_stream(audio_data, sample_rate, fmt):
             return StreamingResponse(buffer, media_type="audio/ogg")
         except Exception as e:
             print(f"OGG Conversion Failed: {e}. Falling back to WAV.")
+            fmt = "wav"
     
     # Fallback / WAV handling
     buffer = io.BytesIO()
@@ -304,11 +328,11 @@ def audio_to_stream(audio_data, sample_rate, fmt):
     if fmt == "pcm": sf_fmt = "RAW"
     
     try:
-        sf.write(buffer, audio_data, sample_rate, format=sf_fmt, subtype='PCM_16' if fmt=='pcm' else None)
+        sf.write(buffer, audio_data, sample_rate, format=sf_fmt, subtype='PCM_16')
     except Exception:
         print("Warning: format write failed, falling back to WAV")
         buffer = io.BytesIO()
-        sf.write(buffer, audio_data, sample_rate, format="WAV")
+        sf.write(buffer, audio_data, sample_rate, format="WAV", subtype='PCM_16')
         fmt = "wav"
 
     buffer.seek(0)
@@ -324,7 +348,17 @@ def health_check():
         "status": "running",
         "device": DEVICE,
         "device_map": DEVICE_MAP,
+        "dtype": str(TTS_DTYPE).replace("torch.", ""),
         "model_loaded": manager.current_model_type is not None,
+    }
+
+@app.get("/v1/internal/status")
+def internal_status():
+    return {
+        "status": "idle",
+        "model_loaded": manager.current_model_type is not None,
+        "current_model": manager.current_model_type,
+        "device": DEVICE,
     }
 
 @app.post("/v1/internal/unload")
@@ -383,7 +417,9 @@ def generate_speech(req: TTSSpeechRequest):
             text=req.input,
             language=req.language if req.language != "Auto" else "Auto",
             speaker=req.voice, # e.g. "Vivian", "Ryan"
-            instruct=req.instruct
+            instruct=req.instruct,
+            non_streaming_mode=True,
+            max_new_tokens=400
         )
         
         return audio_to_stream(wavs[0], sr, req.response_format)
@@ -541,7 +577,7 @@ async def websocket_stream_endpoint(websocket: WebSocket):
                     text=text,
                     language=language if language != "Auto" else "Auto",
                     speaker=voice,
-                    streamer=streamer, # The hook
+                    audio_streamer=streamer, # The hook
                     non_streaming_mode=False # VERY IMPORTANT for streaming to trigger
                 )
             except Exception as e:

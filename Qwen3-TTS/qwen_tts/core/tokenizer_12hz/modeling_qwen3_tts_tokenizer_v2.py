@@ -39,14 +39,7 @@ from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from transformers.processing_utils import Unpack
 from transformers.utils import ModelOutput, auto_docstring, logging
 from transformers.utils.deprecation import deprecate_kwarg
-try:
-    from transformers.utils.generic import check_model_inputs
-except ImportError:
-    # Compatibility shim for transformers >= 5.x where check_model_inputs was removed
-    def check_model_inputs():
-        def decorator(func):
-            return func
-        return decorator
+from transformers.utils.generic import check_model_inputs
 
 from .configuration_qwen3_tts_tokenizer_v2 import (
     Qwen3TTSTokenizerV2Config,
@@ -264,14 +257,7 @@ class Qwen3TTSTokenizerV2DecoderRotatoryEmbedding(nn.Module):
         self.original_max_seq_len = config.max_position_embeddings
 
         self.config = config
-        if self.rope_type == "default":
-            dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
-            self.rope_init_fn = lambda c, d: (
-                1.0 / (c.rope_theta ** (torch.arange(0, dim, 2, dtype=torch.float32, device=d) / dim)), 
-                1.0
-            )
-        else:
-            self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
         inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
