@@ -303,6 +303,7 @@ async def proxy_request(request: Request, backend_url: str):
 # Audio (TTS)
 @app.post("/v1/audio/speech")
 @app.get("/v1/audio/speech")
+@app.post("/v1/audio/speech/stream")
 async def route_tts(request: Request):
     if "tts" not in BACKENDS:
         raise HTTPException(status_code=503, detail="TTS Backend not configured in registry.")

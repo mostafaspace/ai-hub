@@ -395,6 +395,81 @@ def generate_speech(req: TTSSpeechRequest):
         manager.is_generating = False
         manager.touch()
 
+@app.post("/v1/audio/speech/stream")
+async def generate_speech_stream(req: TTSSpeechRequest):
+    """
+    HTTP Chunked Streaming TTS.
+    Returns a WAV file with audio chunks streamed as they're generated.
+    Uses the Qwen3AudioStreamer to push PCM chunks via StreamingResponse.
+    """
+    import struct
+
+    model = manager.get_model("custom")
+    manager.is_generating = True
+
+    streamer = Qwen3AudioStreamer(model, sample_rate=24000)
+
+    def run_generation():
+        try:
+            model.generate_custom_voice(
+                text=req.input,
+                language=req.language if req.language != "Auto" else "Auto",
+                speaker=req.voice,
+                streamer=streamer,
+                non_streaming_mode=False
+            )
+        except Exception as e:
+            print(f"[Stream Generate Error] {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            streamer.end()
+
+    # Start generation in background thread
+    gen_thread = threading.Thread(target=run_generation, daemon=True)
+    gen_thread.start()
+
+    async def audio_generator():
+        """Yield WAV header + PCM chunks as they arrive."""
+        sample_rate = 24000
+        num_channels = 1
+        bits_per_sample = 16
+
+        # Write a WAV header with unknown data size (0xFFFFFFFF)
+        # This allows streaming — the browser will still play it
+        header = struct.pack(
+            '<4sI4s4sIHHIIHH4sI',
+            b'RIFF', 0xFFFFFFFF,  # Placeholder size
+            b'WAVE',
+            b'fmt ', 16,  # PCM format chunk size
+            1,  # PCM format
+            num_channels,
+            sample_rate,
+            sample_rate * num_channels * bits_per_sample // 8,  # byte rate
+            num_channels * bits_per_sample // 8,  # block align
+            bits_per_sample,
+            b'data', 0xFFFFFFFF  # Placeholder data size
+        )
+        yield header
+
+        total_bytes = 0
+        while True:
+            chunk = await streamer.audio_queue.get()
+            if chunk is None:
+                break
+            yield chunk
+            total_bytes += len(chunk)
+
+        print(f"[Stream] Finished. Total PCM: {total_bytes / 1024:.1f} KB")
+        manager.is_generating = False
+        manager.touch()
+
+    return StreamingResponse(
+        audio_generator(),
+        media_type="audio/wav",
+        headers={"Transfer-Encoding": "chunked"}
+    )
+
 @app.post("/v1/audio/tts")
 def generate_tts_alias(req: TTSSpeechRequest):
     """Alias for /v1/audio/speech to support different clients."""

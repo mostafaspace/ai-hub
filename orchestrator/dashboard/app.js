@@ -389,11 +389,47 @@ function openModal(type) {
             <option value="Nova">Nova</option>
           </select>
         </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:10px">
+          <label class="stream-toggle">
+            <input type="checkbox" id="modalTtsStream" />
+            <span class="stream-slider"></span>
+          </label>
+          <span style="font-size:0.82rem;color:var(--text-secondary)">⚡ Stream (play as it generates)</span>
+        </div>
         <button class="btn btn-primary" onclick="submitTts()" id="modalSubmitBtn">Synthesize</button>
         <div class="modal-result" id="modalResult"></div>
         <div class="audio-player" id="audioPlayer" style="display:none">
           <audio controls id="audioElement"></audio>
         </div>
+      `;
+      break;
+
+    case 'music':
+      html = `
+        <div class="modal-header">
+          <span class="modal-title">🎵 Generate Music</span>
+          <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Style / Prompt</label>
+          <textarea class="form-textarea" id="modalMusicPrompt" placeholder="An upbeat pop song about summer...">An upbeat electronic dance track with driving bass and soaring synths</textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Lyrics (optional)</label>
+          <textarea class="form-textarea" id="modalMusicLyrics" placeholder="[Verse]\nLyrics here...\n[Chorus]\n..."></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Duration (seconds)</label>
+          <select class="form-select" id="modalMusicDuration">
+            <option value="15">15s (Quick)</option>
+            <option value="30" selected>30s</option>
+            <option value="60">60s</option>
+            <option value="120">120s</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="submitMusic()" id="modalSubmitBtn">Generate</button>
+        <div class="modal-result" id="modalResult"></div>
+        <div class="modal-media" id="modalMedia" style="display:none"></div>
       `;
       break;
 
@@ -418,6 +454,39 @@ function openModal(type) {
         </div>
         <button class="btn btn-primary" onclick="submitImage()" id="modalSubmitBtn">Generate</button>
         <div class="modal-result" id="modalResult"></div>
+        <div class="modal-media" id="modalMedia" style="display:none"></div>
+      `;
+      break;
+
+    case 'video':
+      html = `
+        <div class="modal-header">
+          <span class="modal-title">🎬 Generate Video</span>
+          <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Prompt</label>
+          <textarea class="form-textarea" id="modalVideoPrompt" placeholder="A cinematic wide shot of...">Cinematic wide shot of a sunset over the ocean, golden light reflecting on gentle waves, slow camera push-in, serene atmosphere</textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Resolution</label>
+          <select class="form-select" id="modalVideoRes">
+            <option value="512x768">512 × 768 (Portrait)</option>
+            <option value="768x512" selected>768 × 512 (Landscape)</option>
+            <option value="512x512">512 × 512 (Square)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Duration</label>
+          <select class="form-select" id="modalVideoFrames">
+            <option value="49">~2s (49 frames)</option>
+            <option value="97">~4s (97 frames)</option>
+            <option value="121" selected>~5s (121 frames)</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="submitVideo()" id="modalSubmitBtn">Generate</button>
+        <div class="modal-result" id="modalResult"></div>
+        <div class="modal-media" id="modalMedia" style="display:none"></div>
       `;
       break;
 
@@ -479,17 +548,47 @@ function setModalResult(text, isError = false) {
   btn.style.opacity = '1';
 }
 
+function setModalResultHtml(html) {
+  const result = document.getElementById('modalResult');
+  const btn = document.getElementById('modalSubmitBtn');
+  result.className = 'modal-result success';
+  result.innerHTML = html;
+  btn.disabled = false;
+  btn.style.opacity = '1';
+}
+
+async function pollTask(endpoint, intervalMs = 5000, maxAttempts = 120) {
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, intervalMs));
+    try {
+      const resp = await fetch(`${API_BASE}${endpoint}`);
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      const elapsed = ((i + 1) * intervalMs / 1000).toFixed(0);
+      if (data.status === 'completed') return data;
+      if (data.status === 'failed') throw new Error(data.error || 'Task failed');
+      setModalLoading(`Processing... (${elapsed}s)`);
+    } catch (err) {
+      if (err.message.includes('Task failed') || err.message.includes('failed')) throw err;
+    }
+  }
+  throw new Error('Task timed out');
+}
+
 // --- TTS Submit ---
 async function submitTts() {
   const text = document.getElementById('modalTtsText').value.trim();
   const voice = document.getElementById('modalTtsVoice').value;
+  const streaming = document.getElementById('modalTtsStream')?.checked || false;
   if (!text) return;
 
-  setModalLoading('Synthesizing audio...');
-  addLog(`TTS request: voice=${voice}, length=${text.length} chars`, 'ok');
+  const endpoint = streaming ? '/v1/audio/speech/stream' : '/v1/audio/speech';
+  const label = streaming ? 'Streaming audio...' : 'Synthesizing audio...';
+  setModalLoading(label);
+  addLog(`TTS request: voice=${voice}, stream=${streaming}, length=${text.length} chars`, 'ok');
 
   try {
-    const resp = await fetch(`${API_BASE}/v1/audio/speech`, {
+    const resp = await fetch(`${API_BASE}${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ input: text, voice: voice, response_format: 'wav' }),
@@ -506,12 +605,56 @@ async function submitTts() {
     const audioElement = document.getElementById('audioElement');
     audioElement.src = url;
     audioPlayer.style.display = 'block';
+    if (streaming) audioElement.play();
 
-    setModalResult(`✅ Audio generated (${(blob.size / 1024).toFixed(1)} KB)`);
+    setModalResult(`✅ Audio ${streaming ? 'streamed' : 'generated'} (${(blob.size / 1024).toFixed(1)} KB)`);
     addLog(`TTS completed: ${(blob.size / 1024).toFixed(1)} KB`, 'ok');
   } catch (err) {
     setModalResult(`Error: ${err.message}`, true);
     addLog(`TTS failed: ${err.message}`, 'err');
+  }
+}
+
+// --- Music Submit ---
+async function submitMusic() {
+  const prompt = document.getElementById('modalMusicPrompt').value.trim();
+  const lyrics = document.getElementById('modalMusicLyrics').value.trim();
+  const duration = parseInt(document.getElementById('modalMusicDuration').value);
+  if (!prompt) return;
+
+  setModalLoading('Submitting music generation task...');
+  addLog(`Music request: "${prompt.substring(0, 40)}...", ${duration}s`, 'ok');
+
+  try {
+    const payload = { prompt, audio_duration: duration, thinking: true };
+    if (lyrics) payload.lyrics = lyrics;
+
+    const resp = await fetch(`${API_BASE}/v1/audio/async_generations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
+    const taskId = data.task_id;
+    addLog(`Music task created: ${taskId}`, 'ok');
+    setModalLoading('Generating music... (this takes 30-120s)');
+
+    // Poll until complete
+    const result = await pollTask(`/v1/audio/tasks/${taskId}`);
+    const audioUrl = result.data?.[0]?.url;
+    if (!audioUrl) throw new Error('No audio URL in result');
+
+    const media = document.getElementById('modalMedia');
+    media.innerHTML = `<audio controls src="${audioUrl}" style="width:100%"></audio>
+      <a href="${audioUrl}" download class="btn btn-ghost" style="margin-top:8px;display:inline-flex">⬇ Download MP3</a>`;
+    media.style.display = 'block';
+    setModalResult('✅ Music generated!');
+    addLog(`Music completed: ${taskId}`, 'ok');
+  } catch (err) {
+    setModalResult(`Error: ${err.message}`, true);
+    addLog(`Music generation failed: ${err.message}`, 'err');
   }
 }
 
@@ -525,24 +668,73 @@ async function submitImage() {
   addLog(`Image request: "${prompt.substring(0, 40)}...", size=${size}`, 'ok');
 
   try {
-    // Use async endpoint
     const resp = await fetch(`${API_BASE}/v1/images/async_generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt, size, cfg_normalization: true }),
     });
 
-    if (!resp.ok) {
-      const err = await resp.text();
-      throw new Error(err);
-    }
-
+    if (!resp.ok) throw new Error(await resp.text());
     const data = await resp.json();
-    setModalResult(`✅ Task submitted!\nTask ID: ${data.task_id}\nStatus: ${data.status}\n\nPoll /v1/images/tasks/${data.task_id} for results.`);
-    addLog(`Image task created: ${data.task_id}`, 'ok');
+    const taskId = data.task_id;
+    addLog(`Image task created: ${taskId}`, 'ok');
+    setModalLoading('Generating image... (this takes 1-3 minutes)');
+
+    // Poll until complete
+    const result = await pollTask(`/v1/images/tasks/${taskId}`);
+    const imageUrl = result.data?.[0]?.url;
+    if (!imageUrl) throw new Error('No image URL in result');
+
+    const media = document.getElementById('modalMedia');
+    media.innerHTML = `<img src="${imageUrl}" class="modal-image" alt="Generated image" />
+      <a href="${imageUrl}" download class="btn btn-ghost" style="margin-top:8px;display:inline-flex">⬇ Download Image</a>`;
+    media.style.display = 'block';
+    setModalResult('✅ Image generated!');
+    addLog(`Image completed: ${taskId}`, 'ok');
   } catch (err) {
     setModalResult(`Error: ${err.message}`, true);
     addLog(`Image generation failed: ${err.message}`, 'err');
+  }
+}
+
+// --- Video Submit ---
+async function submitVideo() {
+  const prompt = document.getElementById('modalVideoPrompt').value.trim();
+  const res = document.getElementById('modalVideoRes').value;
+  const numFrames = parseInt(document.getElementById('modalVideoFrames').value);
+  if (!prompt) return;
+
+  const [height, width] = res.split('x').map(Number);
+  setModalLoading('Submitting video generation task...');
+  addLog(`Video request: "${prompt.substring(0, 40)}...", ${width}×${height}, ${numFrames} frames`, 'ok');
+
+  try {
+    const resp = await fetch(`${API_BASE}/v1/video/async_t2v`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, height, width, num_frames: numFrames }),
+    });
+
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
+    const taskId = data.task_id;
+    addLog(`Video task created: ${taskId}`, 'ok');
+    setModalLoading('Generating video... (this takes 1-3 minutes)');
+
+    // Poll until complete
+    const result = await pollTask(`/v1/video/tasks/${taskId}`, 8000);
+    const videoUrl = result.url;
+    if (!videoUrl) throw new Error('No video URL in result');
+
+    const media = document.getElementById('modalMedia');
+    media.innerHTML = `<video controls src="${videoUrl}" class="modal-video" autoplay muted></video>
+      <a href="${videoUrl}" download class="btn btn-ghost" style="margin-top:8px;display:inline-flex">⬇ Download Video</a>`;
+    media.style.display = 'block';
+    setModalResult('✅ Video generated!');
+    addLog(`Video completed: ${taskId}`, 'ok');
+  } catch (err) {
+    setModalResult(`Error: ${err.message}`, true);
+    addLog(`Video generation failed: ${err.message}`, 'err');
   }
 }
 
