@@ -47,10 +47,11 @@ print(response.json())
 **Final Response:**
 ```json
 {
-  "status": "completed",
+  "status": "COMPLETED",
   "task_id": "8b9cad0e1f20",
-  "output_url": "http://192.168.1.26:9000/outputs/8b9cad0e1f20/final_stitched_output.mp4"
+  "message": "Content Director successfully assembled the video.",
+  "output_url": "http://127.0.0.1:9000/outputs/8b9cad0e1f20/final_director_cut.mp4"
 }
 ```
 
-Once the response returns, you can download the final `.mp4` video directly from the `output_url`.
+Once the response returns, you can provide the `output_url` to the user or download it if needed.

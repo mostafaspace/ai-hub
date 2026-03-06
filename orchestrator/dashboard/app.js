@@ -757,7 +757,7 @@ async function submitDirector() {
 
     const data = await resp.json();
     if (resp.ok && data.status === 'COMPLETED') {
-      setModalResult(`✅ Director workflow complete!\nTask ID: ${data.task_id}\nVideo: ${data.final_video_path}`);
+      setModalResult(`✅ Director workflow complete!\nTask ID: ${data.task_id}\nVideo: ${data.output_url}`);
       addLog(`Director completed: ${data.task_id}`, 'ok');
     } else {
       setModalResult(`⚠️ Response:\n${JSON.stringify(data, null, 2)}`, data.error ? true : false);

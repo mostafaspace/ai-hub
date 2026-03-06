@@ -209,14 +209,14 @@ def load_edit_model():
 
 async def idle_check_loop():
     """Background task to unload model after inactivity."""
-    global t2i_pipeline, edit_pipeline, last_activity_time
+    global t2i_pipeline, edit_pipeline, last_activity_time, is_generating
     unload_timeout = getattr(config, "VISION_IDLE_TIMEOUT", 600)
     
     logger.info(f"Idle check loop started (timeout={unload_timeout}s)")
     while not server_shutdown_event.is_set():
         if t2i_pipeline is not None or edit_pipeline is not None:
             idle_time = time.time() - last_activity_time
-            if idle_time > unload_timeout:
+            if not is_generating and idle_time > unload_timeout:
                 logger.info(f"Vision model idle for {int(idle_time)}s. Unloading...")
                 unload_model()
         await asyncio.sleep(60)

@@ -59,6 +59,7 @@ class ModelManager:
         self.last_active = time.time()
         self.idle_timeout = idle_timeout
         self.check_interval = check_interval
+        self.is_generating = False
         self.lock = threading.RLock()
         
         # Start background monitor
@@ -70,10 +71,10 @@ class ModelManager:
         while True:
             time.sleep(self.check_interval)
             # Lock-free check (reading a float is atomic in CPython)
-            if self.model and (time.time() - self.last_active > self.idle_timeout):
+            if self.model and not self.is_generating and (time.time() - self.last_active > self.idle_timeout):
                 with self.lock:
                     # Double-check under lock before unloading
-                    if self.model and (time.time() - self.last_active > self.idle_timeout):
+                    if self.model and not self.is_generating and (time.time() - self.last_active > self.idle_timeout):
                         logger.info(f"Idle timeout reached ({self.idle_timeout}s). Unloading Qwen2-Audio model...")
                         self._unload_internal()
 
@@ -194,11 +195,8 @@ async def transcribe(
     OpenAI-compatible transcription endpoint.
     Actually runs "Audio Analysis" with a prompt asking to transcribe.
     """
-    """
-    OpenAI-compatible transcription endpoint.
-    Actually runs "Audio Analysis" with a prompt asking to transcribe.
-    """
     model, msg_processor = manager.get_model()
+    manager.is_generating = True
 
     try:
         # Read audio file
@@ -269,6 +267,7 @@ async def transcribe(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
+        manager.is_generating = False
         manager.touch()
 
 @app.post("/v1/chat/completions")
@@ -279,6 +278,7 @@ async def chat_completions(req: ChatCompletionRequest):
     content=[{"type": "audio", "audio_url": "..."}, {"type": "text", "text": "..."}]
     """
     model, msg_processor = manager.get_model()
+    manager.is_generating = True
 
     try:
         # We need to process the messages and download any audio_urls manually 
@@ -425,6 +425,7 @@ async def chat_completions(req: ChatCompletionRequest):
         logger.error(f"Chat completion error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
+        manager.is_generating = False
         manager.touch()
 
 if __name__ == "__main__":

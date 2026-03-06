@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import config
 from orchestrator.media_utils import mux_video_and_audio
+from orchestrator.utils_api import utils_router
 
 try:
     from api_utils import GracefulJSONRoute
@@ -63,11 +64,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Register Utility APIs
+app.include_router(utils_router)
+
 # --- Mount Dashboard Static Files ---
 DASHBOARD_DIR = os.path.join(os.path.dirname(__file__), "dashboard")
 if os.path.isdir(DASHBOARD_DIR):
     app.mount("/dashboard", StaticFiles(directory=DASHBOARD_DIR, html=True), name="dashboard")
     print(f"Dashboard mounted from {DASHBOARD_DIR}")
+
+# --- Mount Outputs Directory ---
+OUTPUTS_DIR = os.path.join(os.path.dirname(__file__), "director_outputs")
+os.makedirs(OUTPUTS_DIR, exist_ok=True)
+app.mount("/outputs", StaticFiles(directory=OUTPUTS_DIR), name="outputs")
 
 # --- Task Tracking (in-memory) ---
 recent_tasks = []  # List of dicts: {task_id, workflow, status, started_at, finished_at}
@@ -140,6 +149,7 @@ async def content_director(req: DirectorRequest, request: Request):
         }
 
         # --- STEP 1: Generate Audio ---
+        record_task(task_id, "content_director", "RUNNING (1/4: Generating Text-to-Speech)")
         print(f"[Director] Sending TTS Request -> {tts_url}")
         # Qwen3-TTS takes a long time to load its 1.7B parameter model on cold boot
         tts_resp = await http_client.post(tts_url, json=tts_payload, timeout=None)
@@ -153,6 +163,7 @@ async def content_director(req: DirectorRequest, request: Request):
         print(f"[Director] Audio saved -> {audio_path}")
 
         # --- STEP 2: Generate Image ---
+        record_task(task_id, "content_director", "RUNNING (2/4: Generating Base Image)")
         print(f"[Director] Sending Vision Request -> {vision_url}")
         vision_resp = await http_client.post(vision_url, json=vision_payload)
         
@@ -190,6 +201,7 @@ async def content_director(req: DirectorRequest, request: Request):
         print(f"[Director] Image completed and saved to {image_path}.")
         
         # --- STEP 3: Image-to-Video ---
+        record_task(task_id, "content_director", "RUNNING (3/4: Animating Image to Video)")
         print("[Director] Requesting Video generation from Image...")
         video_url = f"{BACKENDS['video']}/v1/video/async_i2v"
         
@@ -238,6 +250,7 @@ async def content_director(req: DirectorRequest, request: Request):
         print(f"[Director] Video completed at {raw_video_path}.")
 
         # --- STEP 4: Async FFmpeg Muxing ---
+        record_task(task_id, "content_director", "RUNNING (4/4: Stitching Final Render)")
         print("[Director] Stitching Audio and Video...")
         loop = asyncio.get_running_loop()
         final_video_path = os.path.join(work_dir, "final_director_cut.mp4")
@@ -251,12 +264,20 @@ async def content_director(req: DirectorRequest, request: Request):
         print(f"[Director] Workflow complete! {final_video_path}")
         
         record_task(task_id, "content_director", "COMPLETED")
+        
+        host = getattr(config, "HOST", "127.0.0.1")
+        # default to 0.0.0.0 mapping to localhost for URLs if needed, but best effort
+        if host == "0.0.0.0":
+            host = "127.0.0.1"
+            
+        port = getattr(config, "ORCHESTRATOR_PORT", 9000)
+        output_url = f"http://{host}:{port}/outputs/{task_id}/final_director_cut.mp4"
+        
         return JSONResponse(status_code=200, content={
             "task_id": task_id,
             "status": "COMPLETED",
             "message": "Content Director successfully assembled the video.",
-            "final_video_path": final_video_path,
-            "working_directory": work_dir
+            "output_url": output_url
         })
 
     except Exception as e:

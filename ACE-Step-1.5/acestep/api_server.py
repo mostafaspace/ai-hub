@@ -1853,6 +1853,7 @@ def create_app() -> FastAPI:
                 }
 
             t0 = time.time()
+            app.state.is_generating = True
             try:
                 loop = asyncio.get_running_loop()
                 
@@ -1889,6 +1890,7 @@ def create_app() -> FastAPI:
                 # Update local cache
                 _update_local_cache(job_id, None, "failed")
             finally:
+                app.state.is_generating = False
                 dt = max(0.0, time.time() - t0)
                 async with app.state.stats_lock:
                     app.state.recent_durations.append(dt)
@@ -2467,6 +2469,15 @@ def create_app() -> FastAPI:
             "model_loaded": getattr(app.state, "_initialized", False),
             "service": "ACE-Step API",
             "version": "1.0",
+        }
+
+    @app.get("/v1/internal/status")
+    async def internal_status():
+        """Internal status endpoint for Orchestrator Dashboard polling."""
+        is_generating = getattr(app.state, "is_generating", False)
+        return {
+            "status": "generating" if is_generating else "idle",
+            "model_loaded": getattr(app.state, "_initialized", False),
         }
 
     @app.post("/v1/internal/unload")

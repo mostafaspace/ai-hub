@@ -80,13 +80,14 @@ class ModelManager:
         self.monitor_thread.start()
 
     def _idle_monitor(self):
+        global is_generating
         while True:
             time.sleep(self.check_interval)
             # Lock-free check first (reading a float is atomic in CPython)
-            if self.pipeline and (time.time() - self.last_active > self.idle_timeout):
+            if self.pipeline and not is_generating and (time.time() - self.last_active > self.idle_timeout):
                 with self.lock:
                     # Double-check under lock before unloading
-                    if self.pipeline and (time.time() - self.last_active > self.idle_timeout):
+                    if self.pipeline and not is_generating and (time.time() - self.last_active > self.idle_timeout):
                         print(f"[LTX-2] Idle timeout reached ({self.idle_timeout}s). Unloading pipeline...")
                         self._unload_internal()
 
