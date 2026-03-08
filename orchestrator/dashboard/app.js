@@ -9,6 +9,7 @@
 const API_BASE = window.location.origin; // Same-origin as orchestrator
 const POLL_SERVICES_MS = 5000;
 const POLL_TASKS_MS = 10000;
+const POLL_STUDIO_MS = 12000;
 
 // Service registry — defines the cards to render.
 // This is the single source of truth for service display metadata.
@@ -23,6 +24,10 @@ const SERVICE_REGISTRY = [
 // --- State ---
 let servicesData = {};
 let systemLogs = [];
+let studioProjects = [];
+let studioPacks = [];
+let studioTasks = [];
+let studioProfiles = {};
 
 // ==============================================
 //  INITIALIZATION
@@ -32,10 +37,12 @@ document.addEventListener('DOMContentLoaded', () => {
   startClock();
   pollServices();
   pollTasks();
+  pollStudio();
 
   // Start polling loops
   setInterval(pollServices, POLL_SERVICES_MS);
   setInterval(pollTasks, POLL_TASKS_MS);
+  setInterval(pollStudio, POLL_STUDIO_MS);
 
   addLog('Dashboard connected to orchestrator', 'ok');
 });
@@ -290,6 +297,156 @@ function renderTasks(tasks) {
 }
 
 // ==============================================
+//  PRACTICAL STUDIO
+// ==============================================
+async function pollStudio() {
+  try {
+    const [projectsResp, packsResp, tasksResp, profilesResp] = await Promise.all([
+      fetch(`${API_BASE}/v1/studio/projects`),
+      fetch(`${API_BASE}/v1/studio/character-packs`),
+      fetch(`${API_BASE}/v1/studio/tasks`),
+      fetch(`${API_BASE}/v1/studio/format-profiles`),
+    ]);
+
+    if (projectsResp.ok) {
+      const projectsData = await projectsResp.json();
+      studioProjects = projectsData.projects || [];
+    }
+    if (packsResp.ok) {
+      const packsData = await packsResp.json();
+      studioPacks = packsData.character_packs || [];
+    }
+    if (tasksResp.ok) {
+      const tasksData = await tasksResp.json();
+      studioTasks = tasksData.tasks || [];
+    }
+    if (profilesResp.ok) {
+      const profilesData = await profilesResp.json();
+      studioProfiles = profilesData.profiles || {};
+    }
+
+    renderStudioOverview();
+  } catch (err) {
+    // Studio polling is optional.
+  }
+}
+
+function renderStudioOverview() {
+  setText('studioProjectCount', studioProjects.length);
+  setText('studioPackCount', studioPacks.length);
+  setText('studioTaskCount', studioTasks.length);
+  setText('studioProfileCount', Object.keys(studioProfiles).length);
+  setText('studioProjectBadge', `${studioProjects.length} project${studioProjects.length !== 1 ? 's' : ''}`);
+  setText('studioTaskBadge', `${studioTasks.length} job${studioTasks.length !== 1 ? 's' : ''}`);
+
+  renderStudioProjects();
+  renderStudioTasks();
+}
+
+function renderStudioProjects() {
+  const el = document.getElementById('studioProjectList');
+  if (!el) return;
+
+  if (!studioProjects.length) {
+    el.innerHTML = `
+      <div class="empty-state">
+        <span class="empty-icon">Projects</span>
+        <span>No studio projects yet</span>
+      </div>
+    `;
+    return;
+  }
+
+  el.innerHTML = '';
+  studioProjects.slice(0, 6).forEach(project => {
+    const item = document.createElement('div');
+    const assetCount = Array.isArray(project.assets) ? project.assets.length : 0;
+    item.className = 'task-item';
+    item.innerHTML = `
+      <div class="task-info">
+        <div class="task-name">${escapeHtml(project.name || 'Untitled Project')}</div>
+        <div class="task-meta">${escapeHtml(project.default_profile || 'no-profile')} · ${assetCount} asset${assetCount !== 1 ? 's' : ''}</div>
+      </div>
+      <span class="task-time">${formatRelativeTime(project.updated_at || project.created_at)}</span>
+    `;
+    el.appendChild(item);
+  });
+}
+
+function renderStudioTasks() {
+  const el = document.getElementById('studioTaskList');
+  if (!el) return;
+
+  if (!studioTasks.length) {
+    el.innerHTML = `
+      <div class="empty-state">
+        <span class="empty-icon">Jobs</span>
+        <span>No studio tasks yet</span>
+      </div>
+    `;
+    return;
+  }
+
+  el.innerHTML = '';
+  studioTasks.slice(0, 8).forEach(task => {
+    const normalized = (task.status || '').toLowerCase();
+    const statusClass = normalized === 'completed' ? 'completed' : normalized === 'processing' ? 'running' : 'failed';
+    const spinnerHtml = normalized === 'processing' ? '<span class="spinner"></span>' : '';
+    const item = document.createElement('div');
+    item.className = 'task-item';
+    item.innerHTML = `
+      <div class="task-info">
+        <div class="task-name">
+          ${escapeHtml(task.kind || 'studio-task')}
+          <span class="task-status ${statusClass}">${spinnerHtml}${escapeHtml(task.status || 'unknown')}</span>
+        </div>
+        <div class="task-meta">${escapeHtml(task.project_id || 'no-project')} · ${escapeHtml(task.task_id || '-').slice(0, 12)}</div>
+      </div>
+      <span class="task-time">${formatRelativeTime(task.updated_at || task.created_at)}</span>
+    `;
+    el.appendChild(item);
+  });
+}
+
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+function formatRelativeTime(timestamp) {
+  if (!timestamp) return '';
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - Number(timestamp)));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+function getStudioProjectOptions(includeEmpty = true) {
+  const options = studioProjects.map(project => `<option value="${escapeHtml(project.project_id)}">${escapeHtml(project.name)}</option>`).join('');
+  return includeEmpty ? `<option value="">No project</option>${options}` : options;
+}
+
+function getStudioPackOptions(includeEmpty = true) {
+  const options = studioPacks.map(pack => `<option value="${escapeHtml(pack.pack_id)}">${escapeHtml(pack.name)}</option>`).join('');
+  return includeEmpty ? `<option value="">No pack</option>${options}` : options;
+}
+
+function getStudioProfileOptions(selected = 'youtube_short') {
+  const fallbackProfiles = {
+    youtube_short: { label: 'YouTube Short' },
+    discord_clip: { label: 'Discord Clip' },
+    podcast_mp3: { label: 'Podcast MP3' },
+    whatsapp_voice: { label: 'WhatsApp Voice' },
+  };
+  const source = Object.keys(studioProfiles).length ? studioProfiles : fallbackProfiles;
+  return Object.entries(source).map(([key, profile]) => {
+    const active = key === selected ? 'selected' : '';
+    return `<option value="${escapeHtml(key)}" ${active}>${escapeHtml(profile.label || key)}</option>`;
+  }).join('');
+}
+
+// ==============================================
 //  SYSTEM LOG
 // ==============================================
 function addLog(msg, level = '') {
@@ -513,6 +670,166 @@ function openModal(type) {
           </select>
         </div>
         <button class="btn btn-primary" onclick="submitDirector()" id="modalSubmitBtn">Launch Pipeline</button>
+        <div class="modal-result" id="modalResult"></div>
+      `;
+      break;
+    case 'studioProject':
+      html = `
+        <div class="modal-header">
+          <span class="modal-title">New Workspace</span>
+          <button class="modal-close" onclick="closeModal()">X</button>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Project Name</label>
+          <input class="form-input" id="studioProjectName" placeholder="Launch Kit" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea class="form-textarea" id="studioProjectDescription" placeholder="Short description for this workspace"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Default Output Profile</label>
+          <select class="form-select" id="studioProjectProfile">${getStudioProfileOptions('youtube_short')}</select>
+        </div>
+        <button class="btn btn-primary" onclick="submitStudioProject()" id="modalSubmitBtn">Create Workspace</button>
+        <div class="modal-result" id="modalResult"></div>
+      `;
+      break;
+
+    case 'studioPack':
+      html = `
+        <div class="modal-header">
+          <span class="modal-title">Character Pack</span>
+          <button class="modal-close" onclick="closeModal()">X</button>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Pack Name</label>
+          <input class="form-input" id="studioPackName" placeholder="Hero Pack" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Default Voice</label>
+          <input class="form-input" id="studioPackVoice" value="Vivian" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Prompt Prefix</label>
+          <textarea class="form-textarea" id="studioPackPrefix" placeholder="cinematic hero portrait"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Prompt Suffix</label>
+          <textarea class="form-textarea" id="studioPackSuffix" placeholder="high detail, dramatic lighting"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Negative Prompt</label>
+          <input class="form-input" id="studioPackNegative" placeholder="blurry" />
+        </div>
+        <button class="btn btn-primary" onclick="submitStudioPack()" id="modalSubmitBtn">Save Pack</button>
+        <div class="modal-result" id="modalResult"></div>
+      `;
+      break;
+
+    case 'studioVoice':
+      html = `
+        <div class="modal-header">
+          <span class="modal-title">Voice Audition</span>
+          <button class="modal-close" onclick="closeModal()">X</button>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Script</label>
+          <textarea class="form-textarea" id="studioVoiceText" placeholder="Welcome to the launch event.">Welcome to the launch event. We are ready to ship.</textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Voices (comma-separated)</label>
+          <input class="form-input" id="studioVoiceList" value="Vivian, Echo, Nova" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Character Pack</label>
+          <select class="form-select" id="studioVoicePack">${getStudioPackOptions(true)}</select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Project</label>
+          <select class="form-select" id="studioVoiceProject">${getStudioProjectOptions(true)}</select>
+        </div>
+        <button class="btn btn-primary" onclick="submitStudioVoice()" id="modalSubmitBtn">Generate Samples</button>
+        <div class="modal-result" id="modalResult"></div>
+        <div class="modal-media" id="modalMedia" style="display:none"></div>
+      `;
+      break;
+
+    case 'studioPromptCompare':
+      html = `
+        <div class="modal-header">
+          <span class="modal-title">Prompt Compare</span>
+          <button class="modal-close" onclick="closeModal()">X</button>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Prompt Variants (one per line)</label>
+          <textarea class="form-textarea" id="studioPromptVariants" placeholder="one prompt per line">a clean studio product shot
+a dramatic cinematic product shot
+a bright social-media product shot</textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Character Pack</label>
+          <select class="form-select" id="studioPromptPack">${getStudioPackOptions(true)}</select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Project</label>
+          <select class="form-select" id="studioPromptProject">${getStudioProjectOptions(true)}</select>
+        </div>
+        <button class="btn btn-primary" onclick="submitStudioPromptCompare()" id="modalSubmitBtn">Run Compare</button>
+        <div class="modal-result" id="modalResult"></div>
+        <div class="modal-media" id="modalMedia" style="display:none"></div>
+      `;
+      break;
+
+    case 'studioCaptions':
+      html = `
+        <div class="modal-header">
+          <span class="modal-title">Auto-Captions</span>
+          <button class="modal-close" onclick="closeModal()">X</button>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Media URL</label>
+          <input class="form-input" id="studioCaptionUrl" placeholder="http://.../video.mp4" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Output Profile</label>
+          <select class="form-select" id="studioCaptionProfile">${getStudioProfileOptions('youtube_short')}</select>
+        </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:10px">
+          <label class="stream-toggle">
+            <input type="checkbox" id="studioCaptionBurnIn" checked />
+            <span class="stream-slider"></span>
+          </label>
+          <span style="font-size:0.82rem;color:var(--text-secondary)">Burn subtitles into a new video copy</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Project</label>
+          <select class="form-select" id="studioCaptionProject">${getStudioProjectOptions(true)}</select>
+        </div>
+        <button class="btn btn-primary" onclick="submitStudioCaptions()" id="modalSubmitBtn">Generate Captions</button>
+        <div class="modal-result" id="modalResult"></div>
+      `;
+      break;
+
+    case 'studioTranscode':
+      html = `
+        <div class="modal-header">
+          <span class="modal-title">Output Transcode</span>
+          <button class="modal-close" onclick="closeModal()">X</button>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Media URL</label>
+          <input class="form-input" id="studioTranscodeUrl" placeholder="http://.../media.mp4" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Profile</label>
+          <select class="form-select" id="studioTranscodeProfile">${getStudioProfileOptions('podcast_mp3')}</select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Project</label>
+          <select class="form-select" id="studioTranscodeProject">${getStudioProjectOptions(true)}</select>
+        </div>
+        <button class="btn btn-primary" onclick="submitStudioTranscode()" id="modalSubmitBtn">Transcode</button>
         <div class="modal-result" id="modalResult"></div>
       `;
       break;
@@ -769,5 +1086,212 @@ async function submitDirector() {
   } catch (err) {
     setModalResult(`Error: ${err.message}`, true);
     addLog(`Director failed: ${err.message}`, 'err');
+  }
+}
+
+function normalizeOptionalValue(value) {
+  const trimmed = (value || '').trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function parseVoiceList(raw) {
+  return (raw || '')
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean);
+}
+
+async function submitStudioProject() {
+  const name = document.getElementById('studioProjectName').value.trim();
+  const description = document.getElementById('studioProjectDescription').value.trim();
+  const defaultProfile = document.getElementById('studioProjectProfile').value;
+  if (!name) return;
+
+  setModalLoading('Creating workspace...');
+  try {
+    const resp = await fetch(`${API_BASE}/v1/studio/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description, default_profile: defaultProfile }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || JSON.stringify(data));
+    setModalResult(`Workspace created. Project ID: ${data.project_id}`);
+    addLog(`Studio workspace created: ${data.project_id}`, 'ok');
+    pollStudio();
+  } catch (err) {
+    setModalResult(`Error: ${err.message}`, true);
+    addLog(`Studio workspace failed: ${err.message}`, 'err');
+  }
+}
+
+async function submitStudioPack() {
+  const name = document.getElementById('studioPackName').value.trim();
+  const voice = document.getElementById('studioPackVoice').value.trim() || 'Vivian';
+  const promptPrefix = document.getElementById('studioPackPrefix').value.trim();
+  const promptSuffix = document.getElementById('studioPackSuffix').value.trim();
+  const negativePrompt = document.getElementById('studioPackNegative').value.trim();
+  if (!name) return;
+
+  setModalLoading('Saving character pack...');
+  try {
+    const resp = await fetch(`${API_BASE}/v1/studio/character-packs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        voice,
+        prompt_prefix: promptPrefix,
+        prompt_suffix: promptSuffix,
+        negative_prompt: negativePrompt,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || JSON.stringify(data));
+    setModalResult(`Character pack saved. Pack ID: ${data.pack_id}`);
+    addLog(`Studio pack created: ${data.pack_id}`, 'ok');
+    pollStudio();
+  } catch (err) {
+    setModalResult(`Error: ${err.message}`, true);
+    addLog(`Studio pack failed: ${err.message}`, 'err');
+  }
+}
+
+async function submitStudioVoice() {
+  const text = document.getElementById('studioVoiceText').value.trim();
+  const voices = parseVoiceList(document.getElementById('studioVoiceList').value);
+  const projectId = normalizeOptionalValue(document.getElementById('studioVoiceProject').value);
+  const packId = normalizeOptionalValue(document.getElementById('studioVoicePack').value);
+  if (!text || (!voices.length && !packId)) return;
+
+  setModalLoading('Submitting voice audition task...');
+  try {
+    const resp = await fetch(`${API_BASE}/v1/studio/voice-auditions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voices, project_id: projectId, character_pack_id: packId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || JSON.stringify(data));
+    addLog(`Studio voice audition queued: ${data.task_id}`, 'ok');
+    setModalLoading('Generating voice samples...');
+    const result = await pollTask(`/v1/studio/tasks/${data.task_id}`, 3000, 120);
+    const samples = result.result?.samples || [];
+    const media = document.getElementById('modalMedia');
+    media.innerHTML = samples.map(sample => `
+      <div class="studio-media-item">
+        <div class="studio-media-header">${escapeHtml(sample.voice)}</div>
+        <audio controls src="${sample.url}" style="width:100%"></audio>
+        <a href="${sample.url}" class="btn btn-ghost studio-inline-btn" download>Download</a>
+      </div>
+    `).join('');
+    media.style.display = 'block';
+    setModalResult(`Voice audition complete. ${samples.length} sample${samples.length !== 1 ? 's' : ''} ready.`);
+    pollStudio();
+  } catch (err) {
+    setModalResult(`Error: ${err.message}`, true);
+    addLog(`Studio voice audition failed: ${err.message}`, 'err');
+  }
+}
+
+async function submitStudioPromptCompare() {
+  const variants = document.getElementById('studioPromptVariants').value
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+  const projectId = normalizeOptionalValue(document.getElementById('studioPromptProject').value);
+  const packId = normalizeOptionalValue(document.getElementById('studioPromptPack').value);
+  if (!variants.length) return;
+
+  setModalLoading('Submitting prompt compare task...');
+  try {
+    const resp = await fetch(`${API_BASE}/v1/studio/prompt-compare`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt_variants: variants,
+        project_id: projectId,
+        character_pack_id: packId,
+        shared_options: { size: '1024x1024', cfg_normalization: true },
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || JSON.stringify(data));
+    addLog(`Studio prompt compare queued: ${data.task_id}`, 'ok');
+    setModalLoading('Rendering prompt variants...');
+    const result = await pollTask(`/v1/studio/tasks/${data.task_id}`, 4000, 120);
+    const variantsOut = result.result?.variants || [];
+    const media = document.getElementById('modalMedia');
+    media.innerHTML = `<div class="studio-compare-grid">${variantsOut.map(item => `
+      <div class="studio-media-item">
+        <img src="${item.url}" class="modal-image" alt="Prompt variant" />
+        <div class="studio-media-caption">${escapeHtml(item.prompt)}</div>
+      </div>
+    `).join('')}</div>`;
+    media.style.display = 'block';
+    setModalResult(`Prompt compare complete. ${variantsOut.length} variant${variantsOut.length !== 1 ? 's' : ''} ready.`);
+    pollStudio();
+  } catch (err) {
+    setModalResult(`Error: ${err.message}`, true);
+    addLog(`Studio prompt compare failed: ${err.message}`, 'err');
+  }
+}
+
+async function submitStudioCaptions() {
+  const mediaUrl = document.getElementById('studioCaptionUrl').value.trim();
+  const projectId = normalizeOptionalValue(document.getElementById('studioCaptionProject').value);
+  const outputProfile = document.getElementById('studioCaptionProfile').value;
+  const burnIn = document.getElementById('studioCaptionBurnIn').checked;
+  if (!mediaUrl) return;
+
+  setModalLoading('Submitting caption task...');
+  try {
+    const resp = await fetch(`${API_BASE}/v1/studio/captions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ media_url: mediaUrl, project_id: projectId, output_profile: outputProfile, burn_in: burnIn }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || JSON.stringify(data));
+    addLog(`Studio captions queued: ${data.task_id}`, 'ok');
+    setModalLoading('Generating captions...');
+    const result = await pollTask(`/v1/studio/tasks/${data.task_id}`, 4000, 120);
+    const payload = result.result || {};
+    const links = [
+      payload.subtitle_url ? `<a href="${payload.subtitle_url}" class="btn btn-ghost studio-inline-btn" download>Download SRT</a>` : '',
+      payload.burned_video_url ? `<a href="${payload.burned_video_url}" class="btn btn-ghost studio-inline-btn" download>Download Captioned Video</a>` : '',
+    ].filter(Boolean).join(' ');
+    setModalResultHtml(`Captions complete.<br><br><div class="studio-result-block">${escapeHtml(payload.transcript || '')}</div><div class="studio-button-row">${links}</div>`);
+    pollStudio();
+  } catch (err) {
+    setModalResult(`Error: ${err.message}`, true);
+    addLog(`Studio captions failed: ${err.message}`, 'err');
+  }
+}
+
+async function submitStudioTranscode() {
+  const mediaUrl = document.getElementById('studioTranscodeUrl').value.trim();
+  const projectId = normalizeOptionalValue(document.getElementById('studioTranscodeProject').value);
+  const profileName = document.getElementById('studioTranscodeProfile').value;
+  if (!mediaUrl) return;
+
+  setModalLoading('Submitting transcode task...');
+  try {
+    const resp = await fetch(`${API_BASE}/v1/studio/transcodes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ media_url: mediaUrl, project_id: projectId, profile_name: profileName }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || JSON.stringify(data));
+    addLog(`Studio transcode queued: ${data.task_id}`, 'ok');
+    setModalLoading('Transcoding media...');
+    const result = await pollTask(`/v1/studio/tasks/${data.task_id}`, 4000, 120);
+    const outputUrl = result.result?.output_url;
+    setModalResultHtml(`Transcode complete.<br><br><div class="studio-button-row"><a href="${outputUrl}" class="btn btn-ghost studio-inline-btn" download>Download Output</a></div>`);
+    pollStudio();
+  } catch (err) {
+    setModalResult(`Error: ${err.message}`, true);
+    addLog(`Studio transcode failed: ${err.message}`, 'err');
   }
 }

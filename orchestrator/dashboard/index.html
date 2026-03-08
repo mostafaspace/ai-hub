@@ -70,6 +70,84 @@
 
     </div>
 
+    <!-- Practical Studio -->
+    <div class="studio-section">
+      <div class="section-title">Practical Studio</div>
+      <div class="studio-grid">
+        <div class="studio-card accent-cyan">
+          <div class="studio-card-label">Projects</div>
+          <div class="studio-card-value" id="studioProjectCount">0</div>
+          <div class="studio-card-meta">Workspaces for reusable media jobs</div>
+        </div>
+        <div class="studio-card accent-purple">
+          <div class="studio-card-label">Character Packs</div>
+          <div class="studio-card-value" id="studioPackCount">0</div>
+          <div class="studio-card-meta">Saved prompt and voice consistency presets</div>
+        </div>
+        <div class="studio-card accent-green">
+          <div class="studio-card-label">Studio Tasks</div>
+          <div class="studio-card-value" id="studioTaskCount">0</div>
+          <div class="studio-card-meta">Async caption, transcode, compare, and audition jobs</div>
+        </div>
+        <div class="studio-card accent-amber">
+          <div class="studio-card-label">Profiles</div>
+          <div class="studio-card-value" id="studioProfileCount">0</div>
+          <div class="studio-card-meta">Reusable output targets like YouTube Shorts and podcast MP3</div>
+        </div>
+      </div>
+
+      <div class="bottom-panels studio-panels">
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title">Studio Workspaces</span>
+            <span class="panel-badge" id="studioProjectBadge">0 projects</span>
+          </div>
+          <div class="panel-body" id="studioProjectList">
+            <div class="empty-state">
+              <span class="empty-icon">📁</span>
+              <span>No studio projects yet</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title">Studio Jobs</span>
+            <span class="panel-badge" id="studioTaskBadge">0 jobs</span>
+          </div>
+          <div class="panel-body" id="studioTaskList">
+            <div class="empty-state">
+              <span class="empty-icon">🧪</span>
+              <span>No studio tasks yet</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="quick-tools studio-tools">
+        <div class="studio-tool-grid">
+          <button class="tool-btn" onclick="openModal('studioProject')">
+            <span class="tool-icon">📁</span> New Workspace
+          </button>
+          <button class="tool-btn" onclick="openModal('studioPack')">
+            <span class="tool-icon">🧬</span> Character Pack
+          </button>
+          <button class="tool-btn" onclick="openModal('studioVoice')">
+            <span class="tool-icon">🎤</span> Voice Audition
+          </button>
+          <button class="tool-btn" onclick="openModal('studioPromptCompare')">
+            <span class="tool-icon">🖼️</span> Prompt Compare
+          </button>
+          <button class="tool-btn" onclick="openModal('studioCaptions')">
+            <span class="tool-icon">📝</span> Auto-Captions
+          </button>
+          <button class="tool-btn" onclick="openModal('studioTranscode')">
+            <span class="tool-icon">🎞️</span> Output Transcode
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Quick Tools -->
     <div class="quick-tools">
       <div class="section-title">Quick Tools</div>

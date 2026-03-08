@@ -1052,3 +1052,149 @@ body::after {
 .service-card:nth-child(5) {
   animation-delay: 0.25s;
 }
+/* --- Practical Studio --- */
+.studio-section {
+  margin-bottom: 32px;
+}
+
+.studio-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.studio-card {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-card);
+}
+
+.studio-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--cyan), transparent 85%);
+}
+
+.studio-card.accent-purple::before {
+  background: linear-gradient(180deg, var(--purple), transparent 85%);
+}
+
+.studio-card.accent-green::before {
+  background: linear-gradient(180deg, var(--green), transparent 85%);
+}
+
+.studio-card.accent-amber::before {
+  background: linear-gradient(180deg, var(--amber), transparent 85%);
+}
+
+.studio-card-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.studio-card-value {
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -1px;
+  margin-bottom: 6px;
+}
+
+.studio-card-meta {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.studio-panels {
+  margin-bottom: 16px;
+}
+
+.studio-tools {
+  margin-bottom: 0;
+}
+
+.studio-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.studio-media-item {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  margin-top: 10px;
+}
+
+.studio-media-header {
+  font-size: 0.82rem;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.studio-media-caption {
+  margin-top: 8px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.studio-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.studio-inline-btn {
+  margin-top: 10px;
+  display: inline-flex;
+}
+
+.studio-result-block {
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-card);
+  color: var(--text-secondary);
+  line-height: 1.5;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+.studio-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+@media (max-width: 900px) {
+  .studio-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .studio-tool-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .studio-compare-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .studio-grid,
+  .studio-tool-grid {
+    grid-template-columns: 1fr;
+  }
+}
