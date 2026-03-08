@@ -133,6 +133,30 @@ python tests/test_all_servers.py
 
 ---
 
+## Practical Studio Tools
+
+The Orchestrator now exposes a **Practical Studio** toolkit at `http://<device-ip>:9000/v1/studio/...` for additive, user-facing media workflows that do **not** modify the existing generation APIs:
+
+- **Project Workspaces** - Save project notes, assets, and a lightweight timeline manifest.
+- **Character Consistency Packs** - Reuse prompt prefixes/suffixes, negative prompts, and default voice settings.
+- **Timeline Editor Lite** - Store clip/audio/subtitle layout and build a render plan without touching source media.
+- **Auto-Captions & Burn-In** - Generate approximate `.srt` subtitles via ASR and optionally burn them into a video copy.
+- **Thumbnail / Contact Sheet Generation** - Produce preview assets for videos with FFmpeg.
+- **Output Format Profiles** - Apply reusable presets such as `youtube_short`, `discord_clip`, `podcast_mp3`, and `whatsapp_voice`.
+- **Voice Audition Mode** - Generate the same script in multiple voices and compare the outputs side-by-side.
+- **Prompt Compare Mode** - Run multiple prompt variants through the Vision backend and collect all outputs in one task.
+
+### Studio Task Pattern
+
+Long-running studio operations follow the hub's async polling pattern:
+
+1. `POST /v1/studio/...` to submit a job.
+2. Receive a `task_id` immediately.
+3. Poll `GET /v1/studio/tasks/{task_id}` until status becomes `completed` or `failed`.
+4. Download any returned URLs from `/outputs/practical/...`.
+
+---
+
 ## 📅 Roadmap & Future Integrations
 
 AI-Hub is a living project with significant expansions planned. We are committed to making this the ultimate hub for open source AI services. 🛸

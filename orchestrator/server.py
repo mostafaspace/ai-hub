@@ -19,6 +19,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import config
 from orchestrator.media_utils import mux_video_and_audio
 from orchestrator.utils_api import utils_router
+from orchestrator.studio_api import studio_router
 
 try:
     from api_utils import GracefulJSONRoute
@@ -66,6 +67,7 @@ app.add_middleware(
 
 # Register Utility APIs
 app.include_router(utils_router)
+app.include_router(studio_router)
 
 # --- Mount Dashboard Static Files ---
 DASHBOARD_DIR = os.path.join(os.path.dirname(__file__), "dashboard")

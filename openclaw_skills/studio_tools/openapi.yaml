@@ -1,0 +1,306 @@
+﻿openapi: 3.1.0
+info:
+  title: AI-Hub Practical Studio API
+  version: 1.0.0
+servers:
+  - url: http://192.168.1.26:9000
+paths:
+  /v1/studio/format-profiles:
+    get:
+      summary: List reusable output format profiles.
+      responses:
+        '200':
+          description: Profiles returned.
+  /v1/studio/tasks/{task_id}:
+    get:
+      summary: Poll a Practical Studio task.
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task status returned.
+  /v1/studio/projects:
+    get:
+      summary: List project workspaces.
+      responses:
+        '200':
+          description: Projects returned.
+    post:
+      summary: Create a project workspace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                default_profile:
+                  type: string
+                tags:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Project created.
+  /v1/studio/projects/{project_id}:
+    get:
+      summary: Fetch a project workspace.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Project returned.
+  /v1/studio/projects/{project_id}/assets:
+    post:
+      summary: Attach an asset URL to a project workspace.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, label, url]
+              properties:
+                kind:
+                  type: string
+                label:
+                  type: string
+                url:
+                  type: string
+                metadata:
+                  type: object
+      responses:
+        '200':
+          description: Updated project returned.
+  /v1/studio/projects/{project_id}/timeline:
+    get:
+      summary: Get the stored timeline manifest for a project.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Timeline returned.
+    put:
+      summary: Save a non-destructive timeline manifest.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Updated project returned.
+  /v1/studio/projects/{project_id}/timeline/plan:
+    post:
+      summary: Build a render plan from the stored timeline.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Render plan returned.
+  /v1/studio/character-packs:
+    get:
+      summary: List character consistency packs.
+      responses:
+        '200':
+          description: Packs returned.
+    post:
+      summary: Create a character consistency pack.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                voice:
+                  type: string
+                prompt_prefix:
+                  type: string
+                prompt_suffix:
+                  type: string
+                negative_prompt:
+                  type: string
+      responses:
+        '200':
+          description: Pack created.
+  /v1/studio/character-packs/{pack_id}:
+    get:
+      summary: Fetch a character consistency pack.
+      parameters:
+        - in: path
+          name: pack_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Pack returned.
+  /v1/studio/captions:
+    post:
+      summary: Generate approximate captions and optional subtitle burn-in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [media_url]
+              properties:
+                media_url:
+                  type: string
+                burn_in:
+                  type: boolean
+                output_profile:
+                  type: string
+                project_id:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/thumbnails:
+    post:
+      summary: Generate a thumbnail image for a media URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [media_url]
+              properties:
+                media_url:
+                  type: string
+                timestamp_sec:
+                  type: number
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/contact-sheets:
+    post:
+      summary: Generate a contact sheet image for a media URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [media_url]
+              properties:
+                media_url:
+                  type: string
+                columns:
+                  type: integer
+                rows:
+                  type: integer
+                thumb_width:
+                  type: integer
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/transcodes:
+    post:
+      summary: Transcode a media URL using a named output profile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [media_url, profile_name]
+              properties:
+                media_url:
+                  type: string
+                profile_name:
+                  type: string
+                project_id:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/voice-auditions:
+    post:
+      summary: Generate the same text in multiple voices.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+                voices:
+                  type: array
+                  items:
+                    type: string
+                character_pack_id:
+                  type: string
+                response_format:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/prompt-compare:
+    post:
+      summary: Run multiple prompt variants through the Vision backend.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt_variants]
+              properties:
+                prompt_variants:
+                  type: array
+                  items:
+                    type: string
+                shared_options:
+                  type: object
+                character_pack_id:
+                  type: string
+                project_id:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.
