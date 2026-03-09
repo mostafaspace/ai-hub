@@ -34,7 +34,7 @@ async def test_director():
                 print(f"\n[PASS] Workflow completed successfully!")
                 print(f"Status: {data.get('status')}")
                 print(f"Task ID: {data.get('task_id')}")
-                print(f"\n---> Final Video Saved to: {data.get('final_video_path')} <---")
+                print(f"\n---> Final Video URL: {data.get('output_url')} <---")
             else:
                 print(f"\n[FAIL] Workflow failed with status: {resp.status_code}")
                 print(resp.text)

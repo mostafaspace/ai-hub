@@ -96,6 +96,13 @@
         </div>
       </div>
 
+      <div class="studio-signal-strip">
+        <div class="studio-signal"><span>Running</span><strong id="studioRunningCount">0</strong></div>
+        <div class="studio-signal"><span>Failed</span><strong id="studioFailedCount">0</strong></div>
+        <div class="studio-signal"><span>Interrupted</span><strong id="studioInterruptedCount">0</strong></div>
+        <div class="studio-signal"><span>Storage</span><strong id="studioStorageValue">0 MB</strong></div>
+      </div>
+
       <div class="bottom-panels studio-panels">
         <div class="panel">
           <div class="panel-header">
@@ -143,6 +150,21 @@
           </button>
           <button class="tool-btn" onclick="openModal('studioTranscode')">
             <span class="tool-icon">🎞️</span> Output Transcode
+          </button>
+          <button class="tool-btn" onclick="openModal('studioThumbnail')">
+            <span class="tool-icon">Thumbnail</span> Thumbnail
+          </button>
+          <button class="tool-btn" onclick="openModal('studioContactSheet')">
+            <span class="tool-icon">Sheet</span> Contact Sheet
+          </button>
+          <button class="tool-btn" onclick="openModal('studioTimeline')">
+            <span class="tool-icon">Render</span> Timeline Render
+          </button>
+          <button class="tool-btn" onclick="openModal('studioDirectorProject')">
+            <span class="tool-icon">Director</span> Director to Project
+          </button>
+          <button class="tool-btn" onclick="openModal('studioImport')">
+            <span class="tool-icon">Import</span> Import Project
           </button>
         </div>
       </div>

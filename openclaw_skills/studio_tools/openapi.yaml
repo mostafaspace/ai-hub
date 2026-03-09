@@ -1,7 +1,7 @@
-﻿openapi: 3.1.0
+openapi: 3.1.0
 info:
   title: AI-Hub Practical Studio API
-  version: 1.0.0
+  version: 1.1.0
 servers:
   - url: http://192.168.1.26:9000
 paths:
@@ -11,6 +11,31 @@ paths:
       responses:
         '200':
           description: Profiles returned.
+  /v1/studio/observability:
+    get:
+      summary: Fetch Studio task, failure, duration, and storage metrics.
+      responses:
+        '200':
+          description: Metrics returned.
+  /v1/studio/tasks:
+    get:
+      summary: List Studio tasks with optional project and status filters.
+      parameters:
+        - in: query
+          name: project_id
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Tasks returned.
   /v1/studio/tasks/{task_id}:
     get:
       summary: Poll a Practical Studio task.
@@ -23,6 +48,81 @@ paths:
       responses:
         '200':
           description: Task status returned.
+  /v1/studio/tasks/{task_id}/events:
+    get:
+      summary: Fetch task event history.
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task events returned.
+  /v1/studio/tasks/{task_id}/cancel:
+    post:
+      summary: Request cancellation for a running Studio task.
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Updated task returned.
+  /v1/studio/tasks/{task_id}/resume:
+    post:
+      summary: Resume a failed, cancelled, or interrupted Studio task.
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task resumed.
+  /v1/studio/tasks/{task_id}/retry:
+    post:
+      summary: Retry a failed, cancelled, or interrupted Studio task.
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task retried.
+  /v1/studio/uploads:
+    post:
+      summary: Upload media for later Studio reuse.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                project_id:
+                  type: string
+                pack_id:
+                  type: string
+                kind:
+                  type: string
+                label:
+                  type: string
+                use_as_pack_photo:
+                  type: boolean
+      responses:
+        '200':
+          description: Upload stored.
   /v1/studio/projects:
     get:
       summary: List project workspaces.
@@ -45,6 +145,8 @@ paths:
                   type: string
                 default_profile:
                   type: string
+                notes:
+                  type: string
                 tags:
                   type: array
                   items:
@@ -52,6 +154,23 @@ paths:
       responses:
         '200':
           description: Project created.
+  /v1/studio/projects/import:
+    post:
+      summary: Import a zipped Studio project archive.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Project imported.
   /v1/studio/projects/{project_id}:
     get:
       summary: Fetch a project workspace.
@@ -65,6 +184,17 @@ paths:
         '200':
           description: Project returned.
   /v1/studio/projects/{project_id}/assets:
+    get:
+      summary: Fetch a project asset gallery.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Asset gallery returned.
     post:
       summary: Attach an asset URL to a project workspace.
       parameters:
@@ -92,6 +222,18 @@ paths:
       responses:
         '200':
           description: Updated project returned.
+  /v1/studio/projects/{project_id}/tasks:
+    get:
+      summary: List Studio tasks attached to a project.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Project tasks returned.
   /v1/studio/projects/{project_id}/timeline:
     get:
       summary: Get the stored timeline manifest for a project.
@@ -133,6 +275,84 @@ paths:
       responses:
         '200':
           description: Render plan returned.
+  /v1/studio/projects/{project_id}/timeline/render:
+    post:
+      summary: Render a new timeline output without mutating source assets.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                format_profile:
+                  type: string
+                include_audio_bed:
+                  type: boolean
+                burn_subtitles:
+                  type: boolean
+                webhook_url:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/projects/{project_id}/director-runs:
+    post:
+      summary: Run the existing Director workflow behind an async Studio task and attach the output to a project.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [image_prompt, voiceover_text]
+              properties:
+                image_prompt:
+                  type: string
+                voiceover_text:
+                  type: string
+                voice:
+                  type: string
+                webhook_url:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/projects/{project_id}/export:
+    post:
+      summary: Export a project workspace and bundled local assets to a zip archive.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                include_local_outputs:
+                  type: boolean
+                webhook_url:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.
   /v1/studio/character-packs:
     get:
       summary: List character consistency packs.
@@ -159,6 +379,8 @@ paths:
                   type: string
                 negative_prompt:
                   type: string
+                photo_url:
+                  type: string
       responses:
         '200':
           description: Pack created.
@@ -174,6 +396,31 @@ paths:
       responses:
         '200':
           description: Pack returned.
+  /v1/studio/character-packs/{pack_id}/photo:
+    post:
+      summary: Upload or replace a character pack reference photo.
+      parameters:
+        - in: path
+          name: pack_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                label:
+                  type: string
+      responses:
+        '200':
+          description: Photo attached.
   /v1/studio/captions:
     post:
       summary: Generate approximate captions and optional subtitle burn-in.
@@ -193,6 +440,8 @@ paths:
                   type: string
                 project_id:
                   type: string
+                webhook_url:
+                  type: string
       responses:
         '200':
           description: Task accepted.
@@ -211,6 +460,10 @@ paths:
                   type: string
                 timestamp_sec:
                   type: number
+                project_id:
+                  type: string
+                webhook_url:
+                  type: string
       responses:
         '200':
           description: Task accepted.
@@ -233,6 +486,10 @@ paths:
                   type: integer
                 thumb_width:
                   type: integer
+                project_id:
+                  type: string
+                webhook_url:
+                  type: string
       responses:
         '200':
           description: Task accepted.
@@ -252,6 +509,8 @@ paths:
                 profile_name:
                   type: string
                 project_id:
+                  type: string
+                webhook_url:
                   type: string
       responses:
         '200':
@@ -277,6 +536,10 @@ paths:
                   type: string
                 response_format:
                   type: string
+                project_id:
+                  type: string
+                webhook_url:
+                  type: string
       responses:
         '200':
           description: Task accepted.
@@ -300,6 +563,8 @@ paths:
                 character_pack_id:
                   type: string
                 project_id:
+                  type: string
+                webhook_url:
                   type: string
       responses:
         '200':

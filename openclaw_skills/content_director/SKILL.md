@@ -50,8 +50,8 @@ print(response.json())
   "status": "COMPLETED",
   "task_id": "8b9cad0e1f20",
   "message": "Content Director successfully assembled the video.",
-  "output_url": "http://127.0.0.1:9000/outputs/8b9cad0e1f20/final_director_cut.mp4"
+  "output_url": "http://192.168.1.26:9000/outputs/8b9cad0e1f20/final_director_cut.mp4"
 }
 ```
 
-Once the response returns, you can provide the `output_url` to the user or download it if needed.
+Once the response returns, you can provide the `output_url` to the user or download it if needed. The URL is generated from the hub's public host so it is usable by remote agents on the LAN.

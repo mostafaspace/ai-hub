@@ -9,12 +9,12 @@ This skill provides the API specification for the Qwen3 TTS server. Agents can u
 
 ## Server Details
 
--   **Base URL**: `http://192.168.1.26:8000`
+-   **Base URL**: `http://192.168.1.26:9000`
 -   **OpenAPI Spec**: `openapi.yaml` (in this directory)
 
 > [!IMPORTANT]
 > **Timeout Setting**: The first request may take up to **60-120 seconds** to load the model. Ensure your HTTP client has a long timeout.
-> **Network Access**: Ensure the agent can reach the server IP (default: `192.168.1.26:8000`).
+> **Network Access**: Ensure the agent can reach the hub IP (default: `192.168.1.26:9000`).
 > **Cold Start**: The service uses dynamic model loading. The first request after interactivity may take **extra time** (up to 20s) to initialize.
 
 ## Capabilities
@@ -94,7 +94,7 @@ Returns standard OpenAI-compatible model metadata.
 To generate speech with a custom designed voice:
 
 1.  Construct the JSON payload with `input` (text to speak) and `instruct` (voice description).
-2.  Send a **POST** request to `http://192.168.1.26:8000/v1/audio/voice_design`.
+2.  Send a **POST** request to `http://192.168.1.26:9000/v1/audio/voice_design`.
 3.  Receive the binary audio stream (content-type: `audio/mpeg` or `audio/wav`).
 4.  Save the stream to a file.
 

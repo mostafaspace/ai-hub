@@ -9,10 +9,10 @@ AI-Hub is designed to be a modular, scalable, and easy-to-use ecosystem for AI-p
 ## ⚡ Current Services
 
 ### 🌐 AI-Hub Orchestrator
-The central Gateway/Reverse-Proxy routing API requests to the appropriate backend model engines.
+The central Gateway/Reverse-Proxy routing API requests to the appropriate backend model engines. Use `GET /health` on port `9000` for a machine-readable hub health check.
 - **Path**: [`/orchestrator`](./orchestrator)
 - **Primary Endpoint**: `http://<device-ip>:9000/v1/...`
-- **Features**: Transparent proxy routing (audio, vision, video), GPU crash prevention loops, and custom macro-skills like the `/v1/workflows/director` that stitches image, audio, and video together automatically using local FFmpeg.
+- **Features**: Transparent proxy routing (tts, music, vision, video), GPU crash prevention loops, and custom macro-skills like the `/v1/workflows/director` that stitches image, audio, and video together automatically using local FFmpeg.
 
 ### 🎙️ Qwen3 TTS
 High-fidelity text-to-speech generation powered by the latest Qwen models.
@@ -138,13 +138,18 @@ python tests/test_all_servers.py
 The Orchestrator now exposes a **Practical Studio** toolkit at `http://<device-ip>:9000/v1/studio/...` for additive, user-facing media workflows that do **not** modify the existing generation APIs:
 
 - **Project Workspaces** - Save project notes, assets, and a lightweight timeline manifest.
-- **Character Consistency Packs** - Reuse prompt prefixes/suffixes, negative prompts, and default voice settings.
-- **Timeline Editor Lite** - Store clip/audio/subtitle layout and build a render plan without touching source media.
-- **Auto-Captions & Burn-In** - Generate approximate `.srt` subtitles via ASR and optionally burn them into a video copy.
+- **Character Consistency Packs** - Reuse prompt prefixes/suffixes, negative prompts, default voice settings, and an optional attached reference photo.
+- **Upload-First Asset Flow** - Upload media once, attach it to a project or character pack, and reuse the hosted URL across Studio jobs.
+- **Timeline Editor Lite + Safe Render** - Store clip/audio/subtitle layout, build a render plan, and create a new rendered output without mutating source media.
+- **Auto-Captions & Burn-In** - Generate approximate `.srt` subtitles via ASR and optionally burn them into a copied video output.
 - **Thumbnail / Contact Sheet Generation** - Produce preview assets for videos with FFmpeg.
 - **Output Format Profiles** - Apply reusable presets such as `youtube_short`, `discord_clip`, `podcast_mp3`, and `whatsapp_voice`.
 - **Voice Audition Mode** - Generate the same script in multiple voices and compare the outputs side-by-side.
 - **Prompt Compare Mode** - Run multiple prompt variants through the Vision backend and collect all outputs in one task.
+- **Director-to-Project Runs** - Launch the existing Director workflow behind an async Studio task and automatically attach the final video to a project.
+- **Project Export / Import** - Package a workspace plus bundled local assets into a zip, then re-import it on another machine.
+- **Task Durability** - Studio tasks persist to disk, survive restarts as `interrupted`, and can be cancelled, resumed, or retried.
+- **Webhooks & Observability** - Optional per-task webhook delivery plus Studio metrics for counts, durations, failures, and storage usage.
 
 ### Studio Task Pattern
 
@@ -152,8 +157,13 @@ Long-running studio operations follow the hub's async polling pattern:
 
 1. `POST /v1/studio/...` to submit a job.
 2. Receive a `task_id` immediately.
-3. Poll `GET /v1/studio/tasks/{task_id}` until status becomes `completed` or `failed`.
-4. Download any returned URLs from `/outputs/practical/...`.
+3. Poll `GET /v1/studio/tasks/{task_id}` until status becomes `completed`, `failed`, `cancelled`, or `interrupted`.
+4. Use `POST /v1/studio/tasks/{task_id}/cancel` or `POST /v1/studio/tasks/{task_id}/resume` when needed.
+5. Download any returned URLs from `/outputs/practical/...`.
+
+### Agent Request Guidance
+
+For remote agents and Windows shells, prefer writing JSON bodies to a temporary `payload.json` file and using `curl -d @payload.json` instead of inline JSON strings. This avoids quote-escaping issues and matches the development protocol guidance.
 
 ---
 

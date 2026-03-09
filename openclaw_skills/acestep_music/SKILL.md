@@ -9,13 +9,13 @@ This skill provides the API specification for the ACE-Step Music server. Agents 
 
 ## Server Details
 
--   **Base URL**: `http://192.168.1.26:8001`
+-   **Base URL**: `http://192.168.1.26:9000`
 -   **OpenAPI Spec**: `openapi.yaml` (in this directory)
 
 > [!IMPORTANT]
 > **Polling Time**: Music generation takes **20-60 seconds**. You must poll the status until it completes.
 > **First Request Slow**: The first request may take longer as the model loads into memory.
-> **Network Access**: Ensure the agent can reach the server IP (default: `192.168.1.26`).
+> **Network Access**: Ensure the agent can reach the hub IP (default: `192.168.1.26`).
 > **Cold Start**: The service uses dynamic model loading. The first request after interactivity may take **extra time** (up to 20s) to initialize.
 
 > [!CAUTION]
@@ -88,7 +88,7 @@ Check if the generation is complete by querying the `task_id`. You must poll thi
   "status": "completed",
   "data": [
     {
-      "url": "http://192.168.1.26:8001/v1/audio?path=..."
+      "url": "http://192.168.1.26:9000/v1/audio?path=..."
     }
   ]
 }
@@ -97,7 +97,7 @@ Check if the generation is complete by querying the `task_id`. You must poll thi
 ### 3. Download Audio
 **GET** `{url}`
 
-Using the `url` from the polling result (e.g., `http://192.168.1.26:8001/v1/audio?path=...`), download the MP3.
+Using the `url` from the polling result (e.g., `http://192.168.1.26:9000/v1/audio?path=...`), download the MP3 through the hub.
 
 ## Example Workflow (Agent)
 

@@ -12,8 +12,8 @@ async def test_orchestrator():
     
     async with httpx.AsyncClient(timeout=None) as client:
         try:
-            # 1. Test Health/Root endpoint
-            resp = await client.get(f"{orchestrator_url}/")
+            # 1. Test explicit health endpoint
+            resp = await client.get(f"{orchestrator_url}/health")
             if resp.status_code == 200:
                 print(f"[PASS] Orchestrator is reachable. Registry: {resp.json().get('registry')}")
             else:
@@ -30,7 +30,16 @@ async def test_orchestrator():
             else:
                 print(f"[FAIL] Expected 200/502/422 but got {resp.status_code} - {resp.text}")
                 
-            # 3. Test Vision Routing
+            # 3. Test Music Routing
+            print("Testing Music proxy route...")
+            music_payload = {"prompt": "A short cinematic piano cue.", "audio_duration": 10, "thinking": True}
+            resp = await client.post(f"{orchestrator_url}/v1/audio/async_generations", json=music_payload)
+            if resp.status_code in [200, 500, 502, 422]:
+                print(f"[PASS] Proxy routed to Music. Status: {resp.status_code}")
+            else:
+                print(f"[FAIL] Expected 200/500/502/422 but got {resp.status_code} - {resp.text}")
+
+            # 4. Test Vision Routing
             print("Testing Vision proxy route...")
             vision_payload = {"prompt": "A magical orchestrator", "cfg_normalization": True}
             resp = await client.post(f"{orchestrator_url}/v1/images/async_generate", json=vision_payload)
@@ -39,7 +48,7 @@ async def test_orchestrator():
             else:
                 print(f"[FAIL] Expected 200/502/422 but got {resp.status_code} - {resp.text}")
 
-            # 4. Test Director Workflow
+            # 5. Test Director Workflow
             print("Testing Director workflow...")
             worker_payload = {
                 "image_prompt": "A cyberpunk city at night with neon lights and flying cars.",

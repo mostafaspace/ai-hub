@@ -1,7 +1,8 @@
-﻿import os
+import os
 import re
 import shutil
 import subprocess
+import tempfile
 from typing import Iterable, Optional
 
 
@@ -221,6 +222,109 @@ def transcode_media(input_path: str, output_path: str, profile_name: str) -> tup
     return _run_ffmpeg(args)
 
 
+def normalize_video_clip(
+    input_path: str,
+    output_path: str,
+    profile_name: str,
+    trim_in_sec: float = 0.0,
+    duration_sec: Optional[float] = None,
+) -> tuple[bool, str]:
+    profile = resolve_format_profile(profile_name)
+    if profile["kind"] != "video":
+        return False, f"Profile {profile_name} is not a video profile."
+
+    args = ["-y"]
+    if trim_in_sec and trim_in_sec > 0:
+        args.extend(["-ss", f"{trim_in_sec:.3f}"])
+    args.extend(["-i", input_path])
+    if duration_sec and duration_sec > 0:
+        args.extend(["-t", f"{duration_sec:.3f}"])
+
+    filter_value = (
+        f"scale={profile['width']}:{profile['height']}:force_original_aspect_ratio=decrease,"
+        f"pad={profile['width']}:{profile['height']}:(ow-iw)/2:(oh-ih)/2,fps={profile['fps']}"
+    )
+    args.extend(
+        [
+            "-vf",
+            filter_value,
+            "-an",
+            "-c:v",
+            profile["video_codec"],
+            "-pix_fmt",
+            "yuv420p",
+            output_path,
+        ]
+    )
+    return _run_ffmpeg(args)
+
+
+def concat_video_clips(clip_paths: list[str], output_path: str) -> tuple[bool, str]:
+    if not clip_paths:
+        return False, "No clips were provided for concatenation."
+
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as handle:
+        list_path = handle.name
+        for clip_path in clip_paths:
+            safe_path = clip_path.replace("'", "'\\''")
+            handle.write(f"file '{safe_path}'\n")
+
+    try:
+        return _run_ffmpeg(
+            [
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                list_path,
+                "-c",
+                "copy",
+                output_path,
+            ]
+        )
+    finally:
+        try:
+            os.remove(list_path)
+        except OSError:
+            pass
+
+
+def attach_audio_bed(
+    video_path: str,
+    audio_path: str,
+    output_path: str,
+    start_sec: float = 0.0,
+    volume: float = 1.0,
+) -> tuple[bool, str]:
+    delay_ms = max(int(start_sec * 1000), 0)
+    audio_filter = f"[1:a]volume={max(volume, 0.0)},adelay={delay_ms}|{delay_ms}[aud]"
+    return _run_ffmpeg(
+        [
+            "-y",
+            "-i",
+            video_path,
+            "-stream_loop",
+            "-1",
+            "-i",
+            audio_path,
+            "-filter_complex",
+            audio_filter,
+            "-map",
+            "0:v:0",
+            "-map",
+            "[aud]",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-shortest",
+            output_path,
+        ]
+    )
+
+
 def _escape_subtitles_path(path: str) -> str:
     return path.replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
@@ -361,9 +465,14 @@ def build_timeline_plan(
         "video_clips": clip_items,
         "audio_tracks": audio_items,
         "subtitle_tracks": subtitle_items,
-        "supported_render_scope": "manifest_only",
+        "render_ready": bool(clip_items),
+        "supported_render_scope": {
+            "video_clips": "sequential concat only",
+            "audio_tracks": "first track may be mixed as a looping bed",
+            "subtitle_tracks": "first track may be burned into a copied render",
+        },
         "notes": [
             "Timeline storage is non-destructive and additive.",
-            "Rendering is intentionally limited to keep existing production routes untouched.",
+            "Rendering creates a new output and never mutates source assets.",
         ],
     }

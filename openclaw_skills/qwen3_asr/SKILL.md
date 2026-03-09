@@ -8,7 +8,7 @@ description: Transcribe audio files or perform audio analysis/chat using the Qwe
 This skill allows you to interact with the Qwen3-ASR server (backed by Qwen2-Audio-7B-Instruct) for Speech-to-Text (ASR) and general audio analysis.
 
 ## Server Details
-- **URL**: `http://192.168.1.26:8002` (Default)
+- **URL**: `http://192.168.1.26:9000` (Default hub endpoint)
 - **Model**: `Qwen/Qwen2-Audio-7B-Instruct`
 - **OpenAPI Spec**: `openapi.yaml` (in this directory)
 - **Cold Start**: Service sleeps after inactivity. Expect 5-10s delay on first request.
@@ -27,7 +27,7 @@ This skill allows you to interact with the Qwen3-ASR server (backed by Qwen2-Aud
 ```python
 import requests
 
-url = "http://192.168.1.26:8002/v1/audio/transcriptions"
+url = "http://192.168.1.26:9000/v1/audio/transcriptions"
 files = {"file": open("path/to/audio.wav", "rb")}
 data = {"prompt": "Transcribe this meeting recording."}
 
@@ -46,7 +46,7 @@ Audio can be provided as a URL or base64 data URI.
 ```python
 import requests
 
-url = "http://192.168.1.26:8002/v1/chat/completions"
+url = "http://192.168.1.26:9000/v1/chat/completions"
 messages = [
     {
         "role": "user", 

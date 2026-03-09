@@ -1198,3 +1198,111 @@ body::after {
     grid-template-columns: 1fr;
   }
 }
+.studio-signal-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.studio-signal {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-secondary);
+}
+
+.studio-signal strong {
+  color: var(--text-primary);
+  font-size: 0.92rem;
+}
+
+.studio-clickable {
+  cursor: pointer;
+}
+
+.studio-clickable:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.studio-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.studio-asset-gallery {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.studio-asset-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+}
+
+.studio-asset-card img,
+.studio-asset-card video {
+  width: 100%;
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+
+.studio-meta-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.studio-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-card);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.studio-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.studio-file-hint {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+}
+
+.studio-task-event {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.8rem;
+}
+
+.studio-task-event:last-child {
+  border-bottom: none;
+}
+
+@media (max-width: 900px) {
+  .studio-signal-strip,
+  .studio-detail-grid,
+  .studio-asset-gallery {
+    grid-template-columns: 1fr;
+  }
+}

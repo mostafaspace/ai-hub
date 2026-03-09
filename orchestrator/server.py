@@ -6,6 +6,7 @@ import uuid
 import asyncio
 import time
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -102,7 +103,31 @@ def record_task(task_id, workflow, status, started_at=None):
     if len(recent_tasks) > MAX_TRACKED_TASKS:
         recent_tasks.pop()
 
-
+def _public_host() -> str:
+    host = getattr(config, "PUBLIC_HOST", None) or getattr(config, "HOST", "127.0.0.1")
+    if host == "0.0.0.0":
+        return "127.0.0.1"
+    return host
+def _orchestrator_base_url() -> str:
+    return f"http://{_public_host()}:{getattr(config, 'ORCHESTRATOR_PORT', 9000)}"
+def _rewrite_backend_url_to_hub(url: str, backend_name: str) -> str:
+    if not url:
+        return url
+    backend_url = BACKENDS.get(backend_name)
+    if not backend_url:
+        return url
+    if url.startswith("/"):
+        return f"{_orchestrator_base_url()}{url}"
+    parsed_url = urlparse(url)
+    parsed_backend = urlparse(backend_url)
+    if parsed_url.scheme not in {"http", "https"}:
+        return url
+    if parsed_url.netloc != parsed_backend.netloc:
+        return url
+    rewritten = f"{_orchestrator_base_url()}{parsed_url.path}"
+    if parsed_url.query:
+        rewritten += f"?{parsed_url.query}"
+    return rewritten
 # --- MACRO SKILLS: The Content Director ---
 
 class DirectorRequest(BaseModel):
@@ -223,7 +248,7 @@ async def content_director(req: DirectorRequest, request: Request):
         vid_task_id = vid_init.json().get("task_id")
         print(f"[Director] Video task started: {vid_task_id}. Polling...")
         
-        # Poll Video with a deadline — LTX-2 can take many minutes
+        # Poll Video with a deadline - LTX-2 can take many minutes
         # LTX video tasks return a flat dict: {"status": "completed", "url": "http://..."}
         raw_video_path = None
         deadline = asyncio.get_event_loop().time() + POLL_DEADLINE
@@ -267,13 +292,7 @@ async def content_director(req: DirectorRequest, request: Request):
         
         record_task(task_id, "content_director", "COMPLETED")
         
-        host = getattr(config, "HOST", "127.0.0.1")
-        # default to 0.0.0.0 mapping to localhost for URLs if needed, but best effort
-        if host == "0.0.0.0":
-            host = "127.0.0.1"
-            
-        port = getattr(config, "ORCHESTRATOR_PORT", 9000)
-        output_url = f"http://{host}:{port}/outputs/{task_id}/final_director_cut.mp4"
+        output_url = f"{_orchestrator_base_url()}/outputs/{task_id}/final_director_cut.mp4"
         
         return JSONResponse(status_code=200, content={
             "task_id": task_id,
@@ -323,6 +342,13 @@ async def proxy_request(request: Request, backend_url: str):
 
 # --- Routing ---
 
+@app.get("/health")
+async def orchestrator_health():
+    return {
+        "status": "ok",
+        "message": "AI-Hub Orchestrator is running.",
+        "registry": BACKENDS,
+    }
 # Audio (TTS)
 @app.post("/v1/audio/speech")
 @app.get("/v1/audio/speech")
@@ -347,6 +373,39 @@ async def route_asr(request: Request):
         raise HTTPException(status_code=503, detail="ASR Backend not configured.")
     return await proxy_request(request, BACKENDS["asr"])
 
+# Audio (Music)
+@app.post("/v1/audio/async_generations")
+@app.get("/v1/audio")
+async def route_music(request: Request):
+    if "music" not in BACKENDS:
+        raise HTTPException(status_code=503, detail="Music Backend not configured.")
+    return await proxy_request(request, BACKENDS["music"])
+@app.get("/v1/audio/tasks/{task_id}")
+async def route_music_tasks(request: Request, task_id: str):
+    if "music" not in BACKENDS:
+        raise HTTPException(status_code=503, detail="Music Backend not configured.")
+    url = f"{BACKENDS['music']}{request.url.path}"
+    if request.url.query:
+        url += f"?{request.url.query}"
+    headers = dict(request.headers)
+    headers.pop("host", None)
+    try:
+        resp = await http_client.get(url, headers=headers)
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Bad Gateway: Error communicating with backend model service: {e}")
+    filtered_headers = {
+        k: v for k, v in resp.headers.items()
+        if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")
+    }
+    content_type = resp.headers.get("content-type", "")
+    if "application/json" not in content_type.lower():
+        return Response(content=resp.content, status_code=resp.status_code, headers=filtered_headers)
+    data = resp.json()
+    if data.get("status") == "completed":
+        for item in data.get("data", []):
+            if isinstance(item, dict) and item.get("url"):
+                item["url"] = _rewrite_backend_url_to_hub(item["url"], "music")
+    return JSONResponse(status_code=resp.status_code, content=data, headers=filtered_headers)
 # Vision (Images)
 @app.post("/v1/images/generations")
 @app.post("/v1/images/async_generate")
