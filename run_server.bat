@@ -2,6 +2,8 @@
 setlocal EnableDelayedExpansion
 title Antigravity AI Server Launcher
 color 0A
+call :RESOLVE_PYTHON
+if errorlevel 1 exit /b 1
 
 :: ============================================================
 :: ONE-CLICK START: Run without arguments to start all servers
@@ -53,7 +55,7 @@ echo.
 echo Starting Unified Server (All-in-One)...
 echo Press Ctrl+C in the new window to stop all servers.
 echo.
-start "Unified AI Server" cmd /k "cd /d %~dp0 && python unified_server.py"
+start "Unified AI Server" cmd /k "cd /d %~dp0 && %PYTHON_CMD% unified_server.py"
 goto MENU
 
 :KILL_ALL
@@ -89,55 +91,55 @@ timeout /t 2 >nul
 goto :EOF
 
 :TTS
-call :KILL_PORT 8000
+call  8000
 echo.
 echo Starting Qwen3 TTS Server on port 8000...
-start "Qwen3 TTS Server" cmd /k "cd /d %~dp0Qwen3-TTS && set HF_HOME=D:\hf_models&& python server.py"
+start "Qwen3 TTS Server" cmd /k "cd /d %~dp0Qwen3-TTS && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u server.py"
 echo TTS Server starting in new window!
 pause
 goto MENU
 
 :ACESTEP
-call :KILL_PORT 8001
+call  8001
 echo.
 echo Starting ACE-Step Music Server on port 8001...
-start "ACE-Step Music Server" cmd /k "cd /d %~dp0ACE-Step-1.5 && uv run acestep-api --host 0.0.0.0 --port 8001"
+start "ACE-Step Music Server" cmd /k "cd /d %~dp0ACE-Step-1.5 && %PYTHON_CMD% -u -m acestep.api_server --host 0.0.0.0 --port 8001"
 echo ACE-Step Server starting in new window!
 pause
 goto MENU
 
 :ASR
-call :KILL_PORT 8002
+call  8002
 echo.
 echo Starting Qwen3 ASR Server on port 8002...
-start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && python server.py"
+start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u server.py"
 echo ASR Server starting in new window!
 pause
 goto MENU
 
 :VISION
-call :KILL_PORT 8003
+call  8003
 echo.
 echo Starting Vision Service on port 8003...
-start "Vision Service" cmd /k "cd /d %~dp0Z-Image && set HF_HOME=D:\hf_models && python vision_server.py"
+start "Vision Service" cmd /k "cd /d %~dp0Z-Image && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u vision_server.py"
 echo Vision Service starting in new window!
 pause
 goto MENU
 
 :VIDEO
-call :KILL_PORT 8004
+call  8004
 echo.
 echo Starting LTX-2 Video Server on port 8004...
-start "LTX-2 Video Server" cmd /k "cd /d %~dp0LTX-2-Video && set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && set HF_HOME=D:\hf_models && python server.py"
+start "LTX-2 Video Server" cmd /k "cd /d %~dp0LTX-2-Video && set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u server.py"
 echo Video Server starting in new window!
 pause
 goto MENU
 
 :ORCHESTRATOR
-call :KILL_PORT 9000
+call  9000
 echo.
 echo Starting AI-Hub Orchestrator on port 9000...
-start "AI-Hub Orchestrator Gateway" cmd /k "cd /d %~dp0orchestrator && python server.py"
+start "AI-Hub Orchestrator Gateway" cmd /k "cd /d %~dp0orchestrator && %PYTHON_CMD% -u server.py"
 echo Orchestrator starting in new window!
 pause
 goto MENU
@@ -161,27 +163,27 @@ timeout /t 2 >nul
 
 echo.
 echo [1/5] Starting Qwen3 TTS Server (port 8000)...
-start "Qwen3 TTS Server" cmd /k "cd /d %~dp0Qwen3-TTS && set HF_HOME=D:\hf_models&& python server.py"
+start "Qwen3 TTS Server" cmd /k "cd /d %~dp0Qwen3-TTS && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u server.py"
 timeout /t 3 >nul
 
 echo [2/5] Starting ACE-Step Music Server (port 8001)...
-start "ACE-Step Music Server" cmd /k "cd /d %~dp0ACE-Step-1.5 && uv run acestep-api --host 0.0.0.0 --port 8001"
+start "ACE-Step Music Server" cmd /k "cd /d %~dp0ACE-Step-1.5 && %PYTHON_CMD% -u -m acestep.api_server --host 0.0.0.0 --port 8001"
 timeout /t 3 >nul
 
 echo [3/5] Starting Qwen3 ASR Server (port 8002)...
-start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && python server.py"
+start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u server.py"
 timeout /t 3 >nul
 
 echo [4/5] Starting Vision Service (port 8003)...
-start "Vision Service" cmd /k "cd /d %~dp0Z-Image && set HF_HOME=D:\hf_models && python vision_server.py"
+start "Vision Service" cmd /k "cd /d %~dp0Z-Image && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u vision_server.py"
 timeout /t 3 >nul
 
 echo [5/5] Starting LTX-2 Video Server (port 8004)...
-start "LTX-2 Video Server" cmd /k "cd /d %~dp0LTX-2-Video && set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && set HF_HOME=D:\hf_models && python server.py"
+start "LTX-2 Video Server" cmd /k "cd /d %~dp0LTX-2-Video && set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u server.py"
 timeout /t 3 >nul
 
 echo [6/6] Starting AI-Hub Orchestrator (port 9000)...
-start "AI-Hub Orchestrator Gateway" cmd /k "cd /d %~dp0orchestrator && python server.py"
+start "AI-Hub Orchestrator Gateway" cmd /k "cd /d %~dp0orchestrator && %PYTHON_CMD% -u server.py"
 
 echo.
 echo ============================================================
@@ -207,6 +209,26 @@ if "%1"=="" (
 )
 pause
 goto MENU
+
+:RESOLVE_PYTHON
+set "PYTHON_CMD="
+if exist "%~dp0.venv\Scripts\python.exe" set "PYTHON_CMD=%~dp0.venv\Scripts\python.exe"
+if not defined PYTHON_CMD (
+    py -3 -V >nul 2>&1 && set "PYTHON_CMD=py -3"
+)
+if not defined PYTHON_CMD (
+    python -V >nul 2>&1 && set "PYTHON_CMD=python"
+)
+if not defined PYTHON_CMD (
+    uv --version >nul 2>&1 && set "PYTHON_CMD=uv run python"
+)
+if not defined PYTHON_CMD (
+    echo.
+    echo [ERROR] No Python launcher found.
+    echo Install Python, create a .venv, or install uv and try again.
+    exit /b 1
+)
+goto :EOF
 
 :KILL_PORT
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":%1.*LISTENING"') do (

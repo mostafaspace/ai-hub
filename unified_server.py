@@ -21,86 +21,95 @@ import ctypes
 # Configuration
 import config
 
+ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
+WORKSPACE_PYTHON = os.path.join(ROOT_DIR, ".venv", "Scripts", "python.exe")
+PYTHON_BIN = WORKSPACE_PYTHON if os.path.exists(WORKSPACE_PYTHON) else sys.executable
+
+
+def python_cmd(*args):
+    return [PYTHON_BIN, "-u", *args]
 
 def kill_port_occupants():
     """Kill any existing processes occupying our configured ports."""
-    ports = [config.TTS_PORT, config.MUSIC_PORT, config.ASR_PORT, config.VISION_PORT, config.VIDEO_PORT, config.ORCHESTRATOR_PORT]
+    ports = {config.TTS_PORT, config.MUSIC_PORT, config.ASR_PORT, config.VISION_PORT, config.VIDEO_PORT, config.ORCHESTRATOR_PORT}
     pids_to_kill = set()
 
-    for port in ports:
-        try:
-            result = subprocess.run(
-                ["netstat", "-ano"],
-                capture_output=True, text=True, timeout=5
-            )
-            for line in result.stdout.splitlines():
-                # Match lines like:  TCP  0.0.0.0:8000  0.0.0.0:0  LISTENING  12345
-                parts = line.split()
-                if len(parts) >= 5 and f":{port}" in parts[1] and parts[3] == "LISTENING":
-                    pid = int(parts[4])
-                    if pid > 0:
-                        pids_to_kill.add((port, pid))
-        except Exception:
-            pass
+    try:
+        # Run netstat once to get all connections
+        result = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True, timeout=10
+        )
+        for line in result.stdout.splitlines():
+            # Match lines like:  TCP  0.0.0.0:8000  0.0.0.0:0  LISTENING  12345
+            parts = line.split()
+            if len(parts) >= 5 and parts[3] == "LISTENING":
+                local_addr = parts[1]
+                pid = int(parts[4])
+                if pid <= 0:
+                    continue
+                # Check if any of our ports is in the local address
+                for port in ports:
+                    if f":{port}" in local_addr:
+                        pids_to_kill.add(pid)
+                        break
+    except Exception as e:
+        print(f"DEBUG: Error in kill_port_occupants: {e}")
+        pass
 
     if not pids_to_kill:
         return
 
-    print(f"Found {len(pids_to_kill)} process(es) occupying server ports:")
-    killed = set()
-    for port, pid in pids_to_kill:
-        if pid in killed:
-            continue
-        print(f"  Killing PID {pid} on port {port}...")
+    print(f"Found {len(pids_to_kill)} process(es) occupying server ports. Cleaning up...")
+    for pid in pids_to_kill:
+        print(f"  Killing PID {pid}...")
         try:
             subprocess.run(
                 ["taskkill", "/F", "/PID", str(pid)],
                 capture_output=True, timeout=5
             )
-            killed.add(pid)
         except Exception as e:
             print(f"  Warning: Could not kill PID {pid}: {e}")
 
     # Brief pause for OS to release the sockets
-    if killed:
-        time.sleep(1)
+    time.sleep(1)
 
 
 SERVERS = [
     {
         "name": "HUB",
         "cwd": "orchestrator",
-        "cmd": ["python", "server.py"],
+        "cmd": python_cmd("server.py"),
         "color": "\033[97m",  # White
     },
     {
         "name": "TTS",
         "cwd": "Qwen3-TTS", 
-        "cmd": ["python", "server.py"], # It will pick up config from within its own code now too
+        "cmd": python_cmd("server.py"), # It will pick up config from within its own code now too
         "color": "\033[96m",  # Cyan
     },
     {
         "name": "MUSIC",
         "cwd": "ACE-Step-1.5",
-        "cmd": ["uv", "run", "python", "-u", "-m", "acestep.api_server", "--host", config.HOST, "--port", str(config.MUSIC_PORT)],
+        "cmd": python_cmd("-m", "acestep.api_server", "--host", config.HOST, "--port", str(config.MUSIC_PORT)),
         "color": "\033[95m",  # Magenta
     },
     {
         "name": "ASR",
         "cwd": "Qwen3-ASR",
-        "cmd": ["python", "server.py"],
+        "cmd": python_cmd("server.py"),
         "color": "\033[93m",  # Yellow
     },
     {
         "name": "VISION",
         "cwd": "Z-Image",
-        "cmd": ["python", "vision_server.py"],
+        "cmd": python_cmd("vision_server.py"),
         "color": "\033[92m",  # Green
     },
     {
         "name": "VIDEO",
         "cwd": "LTX-2-Video",
-        "cmd": ["python", "server.py"],
+        "cmd": python_cmd("server.py"),
         "color": "\033[94m",  # Blue
     },
 ]
@@ -154,7 +163,7 @@ def start_servers():
         try:
             p = subprocess.Popen(
                 server_conf["cmd"],
-                cwd=server_conf["cwd"],
+                cwd=os.path.join(ROOT_DIR, server_conf["cwd"]),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, # Merge stderr into stdout
                 env=env,
@@ -210,6 +219,7 @@ def main():
     print("      Press Ctrl+C to stop all servers")
     print("=" * 60)
     
+    print("Starting all servers...")
     start_servers()
     
     # Main loop just prints logs

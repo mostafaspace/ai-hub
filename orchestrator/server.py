@@ -5,6 +5,7 @@ import httpx
 import uuid
 import asyncio
 import time
+import json
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from fastapi import FastAPI, Request, Response, HTTPException
@@ -12,6 +13,7 @@ from fastapi.responses import StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 import uvicorn
 from contextlib import asynccontextmanager
 
@@ -41,6 +43,7 @@ def load_registry():
     except Exception as e:
         print(f"Failed to load models.yaml: {e}")
 
+
 # HTTPX Client for connection pooling
 http_client = None
 
@@ -48,10 +51,10 @@ http_client = None
 async def lifespan(app: FastAPI):
     global http_client
     load_registry()
-    # High timeout since generation takes time (None = Infinite because LTX-2 takes >5mins)
-    http_client = httpx.AsyncClient(timeout=None)
-    yield
-    await http_client.aclose()
+    async with httpx.AsyncClient(timeout=None) as client:
+        http_client = client
+        yield
+    http_client = None
 
 app = FastAPI(title="AI-Hub Orchestrator", version="1.0", lifespan=lifespan)
 
@@ -128,6 +131,59 @@ def _rewrite_backend_url_to_hub(url: str, backend_name: str) -> str:
     if parsed_url.query:
         rewritten += f"?{parsed_url.query}"
     return rewritten
+
+def _rewrite_backend_output_url(url: str, backend_name: str, hub_output_prefix: str) -> str:
+    if not url:
+        return url
+
+    backend_url = BACKENDS.get(backend_name)
+    if not backend_url:
+        return url
+
+    if url.startswith("/outputs/"):
+        rel_path = url[len("/outputs/"):].lstrip("/")
+    else:
+        parsed_url = urlparse(url)
+        parsed_backend = urlparse(backend_url)
+        if parsed_url.scheme not in {"http", "https"}:
+            return url
+        if parsed_url.netloc != parsed_backend.netloc or not parsed_url.path.startswith("/outputs/"):
+            return url
+        rel_path = parsed_url.path[len("/outputs/"):].lstrip("/")
+
+    return f"{_orchestrator_base_url()}{hub_output_prefix}/{rel_path}"
+
+
+async def _proxy_backend_output(request: Request, backend_name: str, output_path: str):
+    if backend_name not in BACKENDS:
+        raise HTTPException(status_code=503, detail=f"{backend_name.title()} Backend not configured.")
+
+    url = f"{BACKENDS[backend_name]}/outputs/{output_path.lstrip('/')}"
+    headers = dict(request.headers)
+    headers.pop("host", None)
+
+    try:
+        req = http_client.build_request(method="GET", url=url, headers=headers)
+        proxy_resp = await http_client.send(req, stream=True)
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Bad Gateway: Error communicating with backend model service: {e}")
+
+    async def stream_generator():
+        async for chunk in proxy_resp.aiter_bytes():
+            yield chunk
+
+    filtered_headers = {
+        k: v for k, v in proxy_resp.headers.items()
+        if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")
+    }
+
+    return StreamingResponse(
+        stream_generator(),
+        status_code=proxy_resp.status_code,
+        headers=filtered_headers,
+        background=BackgroundTask(proxy_resp.aclose),
+    )
+
 # --- MACRO SKILLS: The Content Director ---
 
 class DirectorRequest(BaseModel):
@@ -305,11 +361,14 @@ async def content_director(req: DirectorRequest, request: Request):
         import traceback
         traceback.print_exc()
         record_task(task_id, "content_director", "FAILED")
-        return JSONResponse(status_code=500, content={"error": str(e), "task_id": task_id})
+        status_code = 502 if isinstance(e, httpx.RequestError) else 500
+        return JSONResponse(status_code=status_code, content={"error": str(e), "task_id": task_id})
 
 
 # --- Proxy Logic ---
 async def proxy_request(request: Request, backend_url: str):
+    if http_client is None:
+        raise HTTPException(status_code=503, detail="Orchestrator client not initialized.")
     url = f"{backend_url}{request.url.path}"
     if request.url.query:
         url += f"?{request.url.query}"
@@ -349,7 +408,45 @@ async def orchestrator_health():
         "message": "AI-Hub Orchestrator is running.",
         "registry": BACKENDS,
     }
+
+
+@app.get("/v1/models")
+async def route_models():
+    if http_client is None:
+        return {"object": "list", "data": [], "unavailable": [{"backend": "all", "error": "Orchestrator client not initialized"}]}
+    models = []
+    unavailable = []
+
+    for backend_name, backend_url in BACKENDS.items():
+        try:
+            resp = await http_client.get(f"{backend_url}/v1/models")
+        except httpx.RequestError as e:
+            unavailable.append({"backend": backend_name, "error": str(e)})
+            continue
+
+        content_type = resp.headers.get("content-type", "")
+        if resp.status_code == 404 or "application/json" not in content_type.lower():
+            continue
+        if resp.status_code >= 400:
+            unavailable.append({"backend": backend_name, "status_code": resp.status_code})
+            continue
+
+        payload = resp.json()
+        for item in payload.get("data", []):
+            if isinstance(item, dict):
+                enriched_item = dict(item)
+                enriched_item.setdefault("source_backend", backend_name)
+                models.append(enriched_item)
+
+    return {
+        "object": "list",
+        "data": models,
+        "unavailable": unavailable,
+    }
 # Audio (TTS)
+@app.get("/v1/audio/voices")
+@app.get("/v1/audio/voices/list")
+@app.get("/v1/audio/speakers")
 @app.post("/v1/audio/speech")
 @app.get("/v1/audio/speech")
 @app.post("/v1/audio/speech/stream")
@@ -374,6 +471,7 @@ async def route_asr(request: Request):
     return await proxy_request(request, BACKENDS["asr"])
 
 # Audio (Music)
+@app.get("/v1/stats")
 @app.post("/v1/audio/async_generations")
 @app.get("/v1/audio")
 async def route_music(request: Request):
@@ -410,21 +508,72 @@ async def route_music_tasks(request: Request, task_id: str):
 @app.post("/v1/images/generations")
 @app.post("/v1/images/async_generate")
 @app.post("/v1/images/async_edit")
-@app.get("/v1/images/tasks/{task_id}")
-async def route_vision(request: Request, task_id: str = None):
+async def route_vision(request: Request):
     if "vision" not in BACKENDS:
         raise HTTPException(status_code=503, detail="Vision Backend not configured.")
     return await proxy_request(request, BACKENDS["vision"])
+
+
+@app.get("/v1/images/tasks/{task_id}")
+async def route_vision_tasks(task_id: str):
+    if "vision" not in BACKENDS:
+        raise HTTPException(status_code=503, detail="Vision Backend not configured.")
+    try:
+        resp = await http_client.get(f"{BACKENDS['vision']}/v1/images/tasks/{task_id}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Bad Gateway: Error communicating with backend model service: {e}")
+    filtered_headers = {
+        k: v for k, v in resp.headers.items()
+        if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")
+    }
+    content_type = resp.headers.get("content-type", "")
+    if "application/json" not in content_type.lower():
+        return Response(content=resp.content, status_code=resp.status_code, headers=filtered_headers)
+    data = resp.json()
+    for item in data.get("data", []):
+        if isinstance(item, dict) and item.get("url"):
+            item["url"] = _rewrite_backend_output_url(item["url"], "vision", "/v1/images/outputs")
+    return JSONResponse(status_code=resp.status_code, content=data, headers=filtered_headers)
+
+
+@app.get("/v1/images/outputs/{filename:path}")
+async def route_vision_output(request: Request, filename: str):
+    return await _proxy_backend_output(request, "vision", filename)
 
 # Video
 @app.post("/v1/video/generations")
 @app.post("/v1/video/async_t2v")
 @app.post("/v1/video/async_i2v")
-@app.get("/v1/video/tasks/{task_id}")
-async def route_video(request: Request, task_id: str = None):
+async def route_video(request: Request):
     if "video" not in BACKENDS:
         raise HTTPException(status_code=503, detail="Video Backend not configured.")
     return await proxy_request(request, BACKENDS["video"])
+
+
+@app.get("/v1/video/tasks/{task_id}")
+async def route_video_tasks(task_id: str):
+    if "video" not in BACKENDS:
+        raise HTTPException(status_code=503, detail="Video Backend not configured.")
+    try:
+        resp = await http_client.get(f"{BACKENDS['video']}/v1/video/tasks/{task_id}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Bad Gateway: Error communicating with backend model service: {e}")
+    filtered_headers = {
+        k: v for k, v in resp.headers.items()
+        if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")
+    }
+    content_type = resp.headers.get("content-type", "")
+    if "application/json" not in content_type.lower():
+        return Response(content=resp.content, status_code=resp.status_code, headers=filtered_headers)
+    data = resp.json()
+    if isinstance(data, dict) and data.get("url"):
+        data["url"] = _rewrite_backend_output_url(data["url"], "video", "/v1/video/outputs")
+    return JSONResponse(status_code=resp.status_code, content=data, headers=filtered_headers)
+
+
+@app.get("/v1/video/outputs/{filename:path}")
+async def route_video_output(request: Request, filename: str):
+    return await _proxy_backend_output(request, "video", filename)
 
 # Chat Completions (Multiplexing)
 # The Chat Completions endpoint is tricky because multiple backends might use it (ASR uses it for Qwen audio chat, potentially future text LLMs).
@@ -461,7 +610,7 @@ async def hub_services():
 
     async def check_backend(key, url):
         try:
-            resp = await http_client.get(f"{url}/health", timeout=3.0)
+            resp = await http_client.get(f"{url}/health", timeout=10.0)
             if resp.status_code == 200:
                 data = resp.json()
                 # Determine if model is loaded (varies by backend)

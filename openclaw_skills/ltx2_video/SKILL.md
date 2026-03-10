@@ -9,7 +9,7 @@ This skill provides the API specification for the LTX-2 Video server. Agents can
 
 ## Server Details
 
-- **Base URL**: `http://192.168.1.26:8004`
+- **Base URL**: `http://192.168.1.26:9000`
 - **OpenAPI Spec**: `openapi.yaml` (in this directory)
 
 > [!IMPORTANT]
@@ -69,7 +69,7 @@ Poll every 5–10 seconds until `status` changes.
 
 **On success:**
 ```json
-{"status": "completed", "url": "http://192.168.1.26:8004/outputs/ltx2_abc123.mp4"}
+{"status": "completed", "url": "http://192.168.1.26:9000/v1/video/outputs/ltx2_abc123.mp4"}
 ```
 
 **On failure:**
@@ -123,7 +123,7 @@ When a user sends an image via WhatsApp with a message like *"animate this"*:
 2. **Write a prompt** describing the desired animation (use the prompting guide below).
 3. **Submit to I2V**:
    ```
-   POST http://192.168.1.26:8004/v1/video/async_i2v
+   POST http://192.168.1.26:9000/v1/video/async_i2v
    Content-Type: multipart/form-data
    Fields: prompt="...", image=<downloaded bytes>
    ```
