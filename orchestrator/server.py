@@ -238,7 +238,7 @@ async def run_director_task(task_id: str, req: DirectorRequest):
         }
         
         print(f"[Director] Sending TTS Request -> {tts_url}")
-        tts_resp = await http_client.post(tts_url, json=tts_payload, timeout=None)
+        tts_resp = await http_client.post(tts_url, json=tts_payload, timeout=httpx.Timeout(1800.0, connect=30.0))
         
         if tts_resp.status_code != 200:
             raise Exception(f"TTS backend failed: {tts_resp.text}")
@@ -256,7 +256,7 @@ async def run_director_task(task_id: str, req: DirectorRequest):
         }
         
         print(f"[Director] Sending Vision Request -> {vision_url}")
-        vision_resp = await http_client.post(vision_url, json=vision_payload)
+        vision_resp = await http_client.post(vision_url, json=vision_payload, timeout=httpx.Timeout(1800.0, connect=30.0))
         
         if vision_resp.status_code != 200:
             raise Exception(f"Vision backend initialization failed: {vision_resp.text}")
@@ -269,7 +269,7 @@ async def run_director_task(task_id: str, req: DirectorRequest):
         while True:
             if asyncio.get_event_loop().time() > deadline:
                 raise Exception(f"Vision task {vision_task_id} timed out")
-            v_poll = await http_client.get(f"{BACKENDS['vision']}/v1/images/tasks/{vision_task_id}")
+            v_poll = await http_client.get(f"{BACKENDS['vision']}/v1/images/tasks/{vision_task_id}", timeout=httpx.Timeout(30.0))
             v_data = v_poll.json()
             if v_data["status"] == "COMPLETED" or v_data["status"] == "completed":
                 image_url = v_data["data"][0]["url"]
@@ -280,7 +280,7 @@ async def run_director_task(task_id: str, req: DirectorRequest):
                 raise Exception(f"Vision task failed: {v_data.get('error')}")
             await asyncio.sleep(poll_interval)
             
-        img_download = await http_client.get(image_url)
+        img_download = await http_client.get(image_url, timeout=httpx.Timeout(60.0))
         image_path = os.path.join(work_dir, "base_image.jpg")
         with open(image_path, 'wb') as f:
             f.write(img_download.content)
@@ -292,7 +292,7 @@ async def run_director_task(task_id: str, req: DirectorRequest):
         with open(image_path, "rb") as img_file:
             vid_files = {"image": ("base_image.jpg", img_file, "image/jpeg")}
             vid_data = {"prompt": req.image_prompt, "seed": "-1"}
-            vid_init = await http_client.post(video_url, data=vid_data, files=vid_files)
+            vid_init = await http_client.post(video_url, data=vid_data, files=vid_files, timeout=httpx.Timeout(1800.0, connect=30.0))
             
         if vid_init.status_code != 200:
             raise Exception(f"Video backend initialization failed: {vid_init.text}")

@@ -163,23 +163,23 @@ timeout /t 2 >nul
 
 echo.
 echo [1/5] Starting Qwen3 TTS Server (port 8000)...
-start "Qwen3 TTS Server" cmd /k "cd /d %~dp0Qwen3-TTS && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u server.py"
+start "Qwen3 TTS Server" cmd /k "cd /d %~dp0Qwen3-TTS && set HF_HOME=D:\hf_models && set CUDA_VISIBLE_DEVICES=0 && %PYTHON_CMD% -u server.py"
 timeout /t 3 >nul
 
 echo [2/5] Starting ACE-Step Music Server (port 8001)...
-start "ACE-Step Music Server" cmd /k "cd /d %~dp0ACE-Step-1.5 && %PYTHON_CMD% -u -m acestep.api_server --host 0.0.0.0 --port 8001"
+start "ACE-Step Music Server" cmd /k "cd /d %~dp0ACE-Step-1.5 && set HF_HOME=D:\hf_models && set CUDA_VISIBLE_DEVICES=0 && %PYTHON_CMD% -u -m acestep.api_server --host 0.0.0.0 --port 8001"
 timeout /t 3 >nul
 
 echo [3/5] Starting Qwen3 ASR Server (port 8002)...
-start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u server.py"
+start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && set CUDA_VISIBLE_DEVICES=0 && %PYTHON_CMD% -u server.py"
 timeout /t 3 >nul
 
 echo [4/5] Starting Vision Service (port 8003)...
-start "Vision Service" cmd /k "cd /d %~dp0Z-Image && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u vision_server.py"
+start "Vision Service" cmd /k "cd /d %~dp0Z-Image && set HF_HOME=D:\hf_models && set CUDA_VISIBLE_DEVICES=0 && %PYTHON_CMD% -u vision_server.py"
 timeout /t 3 >nul
 
 echo [5/5] Starting LTX-2 Video Server (port 8004)...
-start "LTX-2 Video Server" cmd /k "cd /d %~dp0LTX-2-Video && set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u server.py"
+start "LTX-2 Video Server" cmd /k "cd /d %~dp0LTX-2-Video && set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && set HF_HOME=D:\hf_models && set CUDA_VISIBLE_DEVICES=0 && %PYTHON_CMD% -u server.py"
 timeout /t 3 >nul
 
 echo [6/6] Starting AI-Hub Orchestrator (port 9000)...
