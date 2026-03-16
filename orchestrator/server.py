@@ -20,7 +20,9 @@ from contextlib import asynccontextmanager
 # Add root directory to path to import config
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import config
+from typing import Optional, List
 from orchestrator.media_utils import mux_video_and_audio
+from orchestrator.studio_media import extract_audio_for_transcription, extract_thumbnail, detect_duration
 from orchestrator.utils_api import utils_router
 from orchestrator.studio_api import studio_router
 
@@ -191,50 +193,51 @@ class DirectorRequest(BaseModel):
     voiceover_text: str
     voice: str = "Vivian"
 
+class AuditRequest(BaseModel):
+    media_url: str
+    prompt_context: str = ""
+    check_audio: bool = True
+    check_visual: bool = True
+
 @app.post("/v1/workflows/director")
 async def content_director(req: DirectorRequest, request: Request):
     """
-    The Director Macro-Skill:
-    1. Generates Image via Z-Image
-    2. Generates Audio via Qwen3-TTS
-    3. Transforms Image to Video via LTX-2-Video
-    4. Stitches the video and audio together with FFmpeg.
+    The Director Macro-Skill (Async):
+    1. Returns a task_id immediately.
+    2. Runs the generation pipeline in the background.
     """
     if "vision" not in BACKENDS or "tts" not in BACKENDS or "video" not in BACKENDS:
         raise HTTPException(status_code=503, detail="Required backends (vision, tts, video) are not all configured in the registry.")
 
-    # Create a unique working directory in the orchestrator folder for this task
     task_id = str(uuid.uuid4())
+    record_task(task_id, "content_director", "QUEUED", started_at=time.time())
+    
+    background_task = BackgroundTask(run_director_task, task_id, req)
+    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "QUEUED"}, background=background_task)
+
+
+async def run_director_task(task_id: str, req: DirectorRequest):
+    """Background task for the Director workflow."""
     work_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "director_outputs", task_id))
     os.makedirs(work_dir, exist_ok=True)
     
-    # Fast polling interval and maximum deadline to prevent infinite hangs
+    # Fast polling interval and maximum deadline
     poll_interval = 2.0
-    POLL_DEADLINE = 30 * 60  # 30 minutes max per generation step
+    POLL_DEADLINE = 30 * 60
     
-    print(f"[Director] Started Workflow {task_id}")
+    print(f"[Director] Started Background Workflow {task_id}")
     record_task(task_id, "content_director", "RUNNING")
 
     try:
-        # NOTE: TTS is done first (sequential) because it's a cold-boot and fast relative to video.
-        print("[Director] Requesting TTS and Vision generation...")
-        
-        vision_url = f"{BACKENDS['vision']}/v1/images/async_generate"
-        vision_payload = {
-            "prompt": req.image_prompt,
-            "cfg_normalization": True
-        }
-        
+        # --- STEP 1: Generate Audio ---
+        record_task(task_id, "content_director", "RUNNING (1/4: Generating Text-to-Speech)")
         tts_url = f"{BACKENDS['tts']}/v1/audio/speech"
         tts_payload = {
             "input": req.voiceover_text,
             "voice": req.voice
         }
-
-        # --- STEP 1: Generate Audio ---
-        record_task(task_id, "content_director", "RUNNING (1/4: Generating Text-to-Speech)")
+        
         print(f"[Director] Sending TTS Request -> {tts_url}")
-        # Qwen3-TTS takes a long time to load its 1.7B parameter model on cold boot
         tts_resp = await http_client.post(tts_url, json=tts_payload, timeout=None)
         
         if tts_resp.status_code != 200:
@@ -243,32 +246,33 @@ async def content_director(req: DirectorRequest, request: Request):
         audio_path = os.path.join(work_dir, "voiceover.wav")
         with open(audio_path, 'wb') as f:
             f.write(tts_resp.content)
-        print(f"[Director] Audio saved -> {audio_path}")
 
         # --- STEP 2: Generate Image ---
         record_task(task_id, "content_director", "RUNNING (2/4: Generating Base Image)")
+        vision_url = f"{BACKENDS['vision']}/v1/images/async_generate"
+        vision_payload = {
+            "prompt": req.image_prompt,
+            "cfg_normalization": True
+        }
+        
         print(f"[Director] Sending Vision Request -> {vision_url}")
         vision_resp = await http_client.post(vision_url, json=vision_payload)
         
-        # Check Vision result (Async typically, need to poll)
         if vision_resp.status_code != 200:
             raise Exception(f"Vision backend initialization failed: {vision_resp.text}")
             
         vision_task_id = vision_resp.json().get("task_id")
-        print(f"[Director] Vision task started: {vision_task_id}. Polling...")
         
-        # Poll Vision with a deadline to avoid infinite hang
+        # Poll Vision
         image_url = None
         deadline = asyncio.get_event_loop().time() + POLL_DEADLINE
         while True:
             if asyncio.get_event_loop().time() > deadline:
-                raise Exception(f"Vision task {vision_task_id} timed out after {POLL_DEADLINE}s")
+                raise Exception(f"Vision task {vision_task_id} timed out")
             v_poll = await http_client.get(f"{BACKENDS['vision']}/v1/images/tasks/{vision_task_id}")
             v_data = v_poll.json()
             if v_data["status"] == "COMPLETED" or v_data["status"] == "completed":
-                # Z-Image returns `data` array containing dicts with `url`
                 image_url = v_data["data"][0]["url"]
-                # Convert relative URL to full if needed
                 if image_url.startswith("/"):
                     image_url = f"{BACKENDS['vision']}{image_url}"
                 break
@@ -276,50 +280,35 @@ async def content_director(req: DirectorRequest, request: Request):
                 raise Exception(f"Vision task failed: {v_data.get('error')}")
             await asyncio.sleep(poll_interval)
             
-        # Download the generated image to our work dir
         img_download = await http_client.get(image_url)
         image_path = os.path.join(work_dir, "base_image.jpg")
         with open(image_path, 'wb') as f:
             f.write(img_download.content)
-        print(f"[Director] Image completed and saved to {image_path}.")
-        
+
         # --- STEP 3: Image-to-Video ---
         record_task(task_id, "content_director", "RUNNING (3/4: Animating Image to Video)")
-        print("[Director] Requesting Video generation from Image...")
         video_url = f"{BACKENDS['video']}/v1/video/async_i2v"
         
-        # LTX-2-Video async_i2v explicitly requires a multipart/form boundary containing an `UploadFile` and `Form` fields.
         with open(image_path, "rb") as img_file:
-            vid_files = {
-                "image": ("base_image.jpg", img_file, "image/jpeg")
-            }
-            vid_data = {
-                "prompt": req.image_prompt,
-                "seed": "-1"
-            }
+            vid_files = {"image": ("base_image.jpg", img_file, "image/jpeg")}
+            vid_data = {"prompt": req.image_prompt, "seed": "-1"}
             vid_init = await http_client.post(video_url, data=vid_data, files=vid_files)
+            
         if vid_init.status_code != 200:
             raise Exception(f"Video backend initialization failed: {vid_init.text}")
             
         vid_task_id = vid_init.json().get("task_id")
-        print(f"[Director] Video task started: {vid_task_id}. Polling...")
         
-        # Poll Video with a deadline - LTX-2 can take many minutes
-        # LTX video tasks return a flat dict: {"status": "completed", "url": "http://..."}
+        # Poll Video
         raw_video_path = None
         deadline = asyncio.get_event_loop().time() + POLL_DEADLINE
         while True:
             if asyncio.get_event_loop().time() > deadline:
-                raise Exception(f"Video task {vid_task_id} timed out after {POLL_DEADLINE}s")
+                raise Exception(f"Video task {vid_task_id} timed out")
             vid_poll = await http_client.get(f"{BACKENDS['video']}/v1/video/tasks/{vid_task_id}")
             vid_data = vid_poll.json()
             if vid_data["status"] == "completed":
-                # LTX-2 Video returns a flat dict with a "url" key (served via /outputs/{filename}).
-                # There is no nested "output" key and no "local_path" key in the current server impl.
                 video_result_url = vid_data.get("url")
-                if not video_result_url:
-                    raise Exception(f"Video task completed but returned no URL: {vid_data}")
-                # Build a fully-qualified URL if relative
                 target_url = video_result_url if video_result_url.startswith("http") else f"{BACKENDS['video']}{video_result_url}"
                 vid_download = await http_client.get(target_url)
                 raw_video_path = os.path.join(work_dir, "raw_video.mp4")
@@ -329,40 +318,162 @@ async def content_director(req: DirectorRequest, request: Request):
             elif vid_data["status"] == "failed":
                 raise Exception(f"Video task failed: {vid_data.get('error')}")
             await asyncio.sleep(poll_interval)
-            
-        print(f"[Director] Video completed at {raw_video_path}.")
 
-        # --- STEP 4: Async FFmpeg Muxing ---
+        # --- STEP 4: Muxing ---
         record_task(task_id, "content_director", "RUNNING (4/4: Stitching Final Render)")
-        print("[Director] Stitching Audio and Video...")
         loop = asyncio.get_running_loop()
         final_video_path = os.path.join(work_dir, "final_director_cut.mp4")
         
-        # Run the blocking subprocess in an executor
         success = await loop.run_in_executor(None, mux_video_and_audio, raw_video_path, audio_path, final_video_path)
-        
         if not success:
             raise Exception("FFmpeg failed to mux the final video.")
             
-        print(f"[Director] Workflow complete! {final_video_path}")
-        
         record_task(task_id, "content_director", "COMPLETED")
-        
-        output_url = f"{_orchestrator_base_url()}/outputs/{task_id}/final_director_cut.mp4"
-        
-        return JSONResponse(status_code=200, content={
-            "task_id": task_id,
-            "status": "COMPLETED",
-            "message": "Content Director successfully assembled the video.",
-            "output_url": output_url
-        })
+        print(f"[Director] Completed Workflow {task_id}")
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        record_task(task_id, "content_director", "FAILED")
-        status_code = 502 if isinstance(e, httpx.RequestError) else 500
-        return JSONResponse(status_code=status_code, content={"error": str(e), "task_id": task_id})
+        record_task(task_id, "content_director", f"FAILED: {str(e)}")
+
+
+@app.post("/v1/workflows/audit")
+async def content_auditor(req: AuditRequest, request: Request):
+    """
+    The Auditor Macro-Skill (Async):
+    1. Returns a task_id immediately.
+    2. Runs the multi-modal audit in the background.
+    """
+    if req.check_audio and "asr" not in BACKENDS:
+        raise HTTPException(status_code=503, detail="ASR backend not configured for audio audit.")
+    if req.check_visual and "vision" not in BACKENDS:
+        raise HTTPException(status_code=503, detail="Vision backend not configured for visual audit.")
+
+    task_id = str(uuid.uuid4())
+    record_task(task_id, "content_auditor", "STARTING", started_at=time.time())
+    
+    # We store the final report in a results dict or in the task record
+    # For now, we'll update the 'recent_tasks' status with a JSON string of the report when done
+    # or rely on the directory.
+    
+    background_task = BackgroundTask(run_audit_task, task_id, req)
+    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "STARTING"}, background=background_task)
+
+
+async def run_audit_task(task_id: str, req: AuditRequest):
+    import shutil
+    import base64
+    work_dir = os.path.abspath(os.path.join(OUTPUTS_DIR, "audit", task_id))
+    os.makedirs(work_dir, exist_ok=True)
+
+    print(f"[Auditor] Started Background Audit {task_id} for {req.media_url}")
+    record_task(task_id, "content_auditor", "RUNNING")
+
+    try:
+        # Step 1: Materialize Media
+        record_task(task_id, "content_auditor", "RUNNING (1/3: Materializing Media)")
+        
+        filename = os.path.basename(urlparse(req.media_url).path) or "input_media.mp4"
+        local_media_path = os.path.join(work_dir, filename)
+        
+        if req.media_url.startswith("http"):
+            resp = await http_client.get(req.media_url, timeout=300.0)
+            resp.raise_for_status()
+            with open(local_media_path, "wb") as f:
+                f.write(resp.content)
+        else:
+            if os.path.exists(req.media_url):
+                shutil.copy2(req.media_url, local_media_path)
+            else:
+                alt_path = os.path.join(OUTPUTS_DIR, os.path.basename(req.media_url))
+                if os.path.exists(alt_path):
+                    shutil.copy2(alt_path, local_media_path)
+                else:
+                    raise Exception(f"Media path not found: {req.media_url}")
+
+        audit_report: dict = {
+            "task_id": task_id,
+            "media_url": req.media_url,
+            "audio_audit": None,
+            "visual_audit": None,
+            "overall_status": "COMPLETED"
+        }
+
+        # Step 2: Audio Audit (ASR)
+        if req.check_audio:
+            record_task(task_id, "content_auditor", "RUNNING (2/3: Auditing Audio)")
+            audio_path = os.path.join(work_dir, "extracted_audio.wav")
+            loop = asyncio.get_running_loop()
+            success, msg = await loop.run_in_executor(None, extract_audio_for_transcription, local_media_path, audio_path)
+            
+            if success:
+                print(f"[Auditor] Sending to ASR at {BACKENDS['asr']}...")
+                with open(audio_path, "rb") as f:
+                    asr_resp = await http_client.post(
+                        f"{BACKENDS['asr']}/v1/audio/transcriptions",
+                        files={"file": (os.path.basename(audio_path), f, "audio/wav")},
+                        data={"prompt": req.prompt_context} if req.prompt_context else {},
+                        timeout=None
+                    )
+                if asr_resp.status_code == 200:
+                    audit_report["audio_audit"] = asr_resp.json()
+                else:
+                    audit_report["audio_audit"] = {"error": f"ASR Backend Failed: {asr_resp.text}"}
+            else:
+                audit_report["audio_audit"] = {"error": f"Audio Extraction Failed: {msg}"}
+
+        # Step 3: Visual Audit (Vision)
+        if req.check_visual:
+            record_task(task_id, "content_auditor", "RUNNING (3/3: Auditing Visuals)")
+            duration = await asyncio.to_thread(detect_duration, local_media_path)
+            timestamps = [duration * 0.1, duration * 0.5, duration * 0.9] if duration > 0 else [0]
+            visual_results = []
+            loop = asyncio.get_running_loop()
+            
+            for i, ts in enumerate(timestamps):
+                frame_path = os.path.join(work_dir, f"frame_{i}.jpg")
+                success, msg = await loop.run_in_executor(None, extract_thumbnail, local_media_path, frame_path, ts)
+                if success:
+                    try:
+                        with open(frame_path, "rb") as f:
+                            b64_img = base64.b64encode(f.read()).decode('utf-8')
+                        
+                        vision_payload = {
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "text", "text": "Describe this image in detail. Focus on consistency if it's from a video."},
+                                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}}
+                                    ]
+                                }
+                            ],
+                            "max_tokens": 300
+                        }
+                        v_resp = await http_client.post(f"{BACKENDS['vision']}/v1/chat/completions", json=vision_payload, timeout=None)
+                        if v_resp.status_code == 200:
+                            v_data = v_resp.json()
+                            desc = v_data["choices"][0]["message"]["content"]
+                            visual_results.append({"timestamp": ts, "description": desc})
+                        else:
+                            visual_results.append({"timestamp": ts, "error": f"Vision backend error: {v_resp.text}"})
+                    except Exception as ve:
+                        visual_results.append({"timestamp": ts, "error": f"Vision analysis exception: {str(ve)}"})
+            
+            audit_report["visual_audit"] = visual_results
+
+        # Write result to task record (as a JSON string in status or a separate field)
+        # For simplicity, we'll write a report.json in the work_dir.
+        with open(os.path.join(work_dir, "report.json"), "w") as f:
+            json.dump(audit_report, f, indent=2)
+
+        record_task(task_id, "content_auditor", "COMPLETED")
+        print(f"[Auditor] Completed Audit {task_id}")
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        record_task(task_id, "content_auditor", f"FAILED: {str(e)}")
 
 
 # --- Proxy Logic ---

@@ -173,7 +173,8 @@ class ModelManager:
         while True:
             time.sleep(self.check_interval)
             # Lock-free check (reading a float is atomic in CPython)
-            if self.current_model_type and (time.time() - self.last_active > self.idle_timeout):
+            # Added 'not self.is_generating' to initial check for less lock contention
+            if self.current_model_type and not self.is_generating and (time.time() - self.last_active > self.idle_timeout):
                 with self.lock:
                     # Double-check under lock before unloading
                     if self.current_model_type and not self.is_generating and (time.time() - self.last_active > self.idle_timeout):

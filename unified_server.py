@@ -155,6 +155,9 @@ def start_servers():
         # Force single GPU (device 0) for ALL servers to prevent tensor device mismatch deadlocks
         # and to prevent `accelerate` from sharding models across the disjoint 5090 and 4070 Ti
         env["CUDA_VISIBLE_DEVICES"] = "0"
+        
+        # ACE-Step specific download source preference
+        env["ACESTEP_DOWNLOAD_SOURCE"] = os.getenv("ACESTEP_DOWNLOAD_SOURCE", "huggingface")
 
         # LTX-2 Video memory optimization
         if server_conf["name"] == "VIDEO":

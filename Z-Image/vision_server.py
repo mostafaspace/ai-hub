@@ -214,11 +214,17 @@ async def idle_check_loop():
     
     logger.info(f"Idle check loop started (timeout={unload_timeout}s)")
     while not server_shutdown_event.is_set():
-        if t2i_pipeline is not None or edit_pipeline is not None:
+        # Lock-free check first for performance
+        if (t2i_pipeline is not None or edit_pipeline is not None) and not is_generating:
             idle_time = time.time() - last_activity_time
-            if not is_generating and idle_time > unload_timeout:
-                logger.info(f"Vision model idle for {int(idle_time)}s. Unloading...")
-                unload_model()
+            if idle_time > unload_timeout:
+                # Acquire lock before unloading to prevent race with new requests
+                with generation_lock:
+                    # Double-check under lock
+                    idle_time = time.time() - last_activity_time
+                    if not is_generating and idle_time > unload_timeout:
+                        logger.info(f"Vision model idle for {int(idle_time)}s. Unloading...")
+                        unload_model()
         await asyncio.sleep(60)
 
 # --- Helpers ---

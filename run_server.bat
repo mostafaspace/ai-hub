@@ -94,7 +94,7 @@ goto :EOF
 call  8000
 echo.
 echo Starting Qwen3 TTS Server on port 8000...
-start "Qwen3 TTS Server" cmd /k "cd /d %~dp0Qwen3-TTS && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u server.py"
+start "Qwen3 TTS Server" cmd /k "cd /d %~dp0Qwen3-TTS && set HF_HOME=D:\hf_models && set CUDA_VISIBLE_DEVICES=0 && %PYTHON_CMD% -u server.py"
 echo TTS Server starting in new window!
 pause
 goto MENU
@@ -103,7 +103,7 @@ goto MENU
 call  8001
 echo.
 echo Starting ACE-Step Music Server on port 8001...
-start "ACE-Step Music Server" cmd /k "cd /d %~dp0ACE-Step-1.5 && %PYTHON_CMD% -u -m acestep.api_server --host 0.0.0.0 --port 8001"
+start "ACE-Step Music Server" cmd /k "cd /d %~dp0ACE-Step-1.5 && set HF_HOME=D:\hf_models && set CUDA_VISIBLE_DEVICES=0 && %PYTHON_CMD% -u -m acestep.api_server --host 0.0.0.0 --port 8001"
 echo ACE-Step Server starting in new window!
 pause
 goto MENU
@@ -112,7 +112,7 @@ goto MENU
 call  8002
 echo.
 echo Starting Qwen3 ASR Server on port 8002...
-start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u server.py"
+start "Qwen3 ASR Server" cmd /k "cd /d %~dp0Qwen3-ASR && set HF_HOME=D:\hf_models && set CUDA_VISIBLE_DEVICES=0 && %PYTHON_CMD% -u server.py"
 echo ASR Server starting in new window!
 pause
 goto MENU
@@ -121,7 +121,7 @@ goto MENU
 call  8003
 echo.
 echo Starting Vision Service on port 8003...
-start "Vision Service" cmd /k "cd /d %~dp0Z-Image && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u vision_server.py"
+start "Vision Service" cmd /k "cd /d %~dp0Z-Image && set HF_HOME=D:\hf_models && set CUDA_VISIBLE_DEVICES=0 && %PYTHON_CMD% -u vision_server.py"
 echo Vision Service starting in new window!
 pause
 goto MENU
@@ -130,7 +130,7 @@ goto MENU
 call  8004
 echo.
 echo Starting LTX-2 Video Server on port 8004...
-start "LTX-2 Video Server" cmd /k "cd /d %~dp0LTX-2-Video && set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && set HF_HOME=D:\hf_models && %PYTHON_CMD% -u server.py"
+start "LTX-2 Video Server" cmd /k "cd /d %~dp0LTX-2-Video && set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && set HF_HOME=D:\hf_models && set CUDA_VISIBLE_DEVICES=0 && %PYTHON_CMD% -u server.py"
 echo Video Server starting in new window!
 pause
 goto MENU
