@@ -13,20 +13,38 @@ def get_ffprobe_cmd():
     return FFPROBE_EXE if os.path.exists(FFPROBE_EXE) else shutil.which("ffprobe")
 
 def get_media_duration(path: str) -> float:
-    """Returns duration in seconds using ffprobe."""
-    cmd = [
-        get_ffprobe_cmd(),
-        "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        path
-    ]
+    """Returns duration in seconds using ffprobe or ffmpeg fallback."""
+    ffprobe_cmd = get_ffprobe_cmd()
+    if ffprobe_cmd:
+        cmd = [
+            ffprobe_cmd,
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            path
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return float(result.stdout.strip())
+        except Exception:
+            pass # Fallback to ffmpeg
+            
+    ffmpeg_cmd = get_ffmpeg_cmd()
+    if not ffmpeg_cmd: return 0.0
+    
+    # Fallback: parse ffmpeg -i output
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return float(result.stdout.strip())
+        cmd = [ffmpeg_cmd, "-i", path]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        # Duration: 00:00:13.92, ...
+        import re
+        match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", result.stderr)
+        if match:
+            h, m, s = map(float, match.groups())
+            return h * 3600 + m * 60 + s
     except Exception as e:
-        print(f"[Error] Failed to get duration for {path}: {e}")
-        return 0.0
+        print(f"[Error] Failed to parse duration with ffmpeg: {e}")
+    return 0.0
 
 def loop_video_to_duration(video_path: str, target_duration: float, output_path: str) -> bool:
     """Loops video to reach target_duration using stream_loop."""
@@ -34,12 +52,14 @@ def loop_video_to_duration(video_path: str, target_duration: float, output_path:
     if not ffmpeg_cmd: return False
     
     # We loop it infinitely and cut at target_duration
+    # Added -an to strip any existing audio from the raw video to prevent muxing issues later
     cmd = [
         ffmpeg_cmd,
         "-stream_loop", "-1",
         "-i", video_path,
         "-t", str(target_duration),
-        "-c:v", "libx264", # Re-encode to ensure smooth cuts/looping
+        "-an", # No audio in the looped video
+        "-c:v", "libx264", 
         "-pix_fmt", "yuv420p",
         "-y",
         output_path
@@ -80,43 +100,33 @@ def mix_audio_files(voice_path: str, music_path: str, output_path: str, music_vo
 def mux_video_and_audio(video_path: str, audio_path: str, output_path: str) -> bool:
     """
     Uses FFmpeg to mux a video file and an audio file together.
-    The output video length will be the shortest of the two streams to prevent looping/silence.
+    Forcefully takes video from 1st input and audio from 2nd input.
     """
     ffmpeg_cmd = get_ffmpeg_cmd()
     if ffmpeg_cmd is None:
-        print("[Error] FFmpeg not found locally or on system PATH. Cannot mux audio and video.")
+        print("[Error] FFmpeg not found.")
         return False
         
-    if not os.path.exists(video_path):
-        print(f"[Error] Video input not found: {video_path}")
-        return False
-        
-    if not os.path.exists(audio_path):
-        print(f"[Error] Audio input not found: {audio_path}")
-        return False
-        
-    # Command: ffmpeg -i video.mp4 -i audio.wav -c:v copy -c:a aac -shortest output.mp4 -y
+    # Command: ffmpeg -i video.mp4 -i audio.wav -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -shortest output.mp4 -y
     cmd = [
         ffmpeg_cmd,
         "-i", video_path,
         "-i", audio_path,
-        "-c:v", "copy",          # Copy video stream without re-encoding
-        "-c:a", "aac",           # Encode audio to AAC for wide mp4 compatibility
-        "-b:a", "192k",          # Audio bitrate
-        "-shortest",             # Finish encoding when the shortest input stream ends
-        "-y",                    # Overwrite output file
+        "-map", "0:v:0",         # Take video from 1st input
+        "-map", "1:a:0",         # Take audio from 2nd input
+        "-c:v", "copy",          
+        "-c:a", "aac",           
+        "-b:a", "192k",          
+        "-shortest",             
+        "-y",                    
         output_path
     ]
     
     print(f"Muxing media: {' '.join(cmd)}")
     
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        print("Muxing completed successfully.")
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
         return True
-    except subprocess.CalledProcessError as e:
-        print(f"[Error] FFmpeg muxing failed with exit code {e.returncode}")
-        return False
     except Exception as e:
-        print(f"[Error] Exception during FFmpeg execution: {e}")
+        print(f"[Error] FFmpeg muxing failed: {e}")
         return False

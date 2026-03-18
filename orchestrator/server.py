@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import config
 from typing import Optional, List
-from orchestrator.media_utils import mux_video_and_audio
+from orchestrator.media_utils import mux_video_and_audio, get_media_duration, loop_video_to_duration, mix_audio_files
 from orchestrator.studio_media import extract_audio_for_transcription, extract_thumbnail, detect_duration
 from orchestrator.utils_api import utils_router
 from orchestrator.studio_api import studio_router
@@ -192,6 +192,8 @@ class DirectorRequest(BaseModel):
     image_prompt: str
     voiceover_text: str
     voice: str = "Vivian"
+    music_prompt: Optional[str] = None
+    music_volume: float = 0.2
 
 class AuditRequest(BaseModel):
     media_url: str
@@ -229,41 +231,71 @@ async def run_director_task(task_id: str, req: DirectorRequest):
     record_task(task_id, "content_director", "RUNNING")
 
     try:
-        # --- STEP 1: Generate Audio ---
-        record_task(task_id, "content_director", "RUNNING (1/4: Generating Text-to-Speech)")
+        # --- STEP 1: Generate Audio (Voiceover) ---
+        record_task(task_id, "content_director", "RUNNING (1/5: Generating Voiceover)")
         tts_url = f"{BACKENDS['tts']}/v1/audio/speech"
-        tts_payload = {
-            "input": req.voiceover_text,
-            "voice": req.voice
-        }
+        tts_payload = {"input": req.voiceover_text, "voice": req.voice}
         
         print(f"[Director] Sending TTS Request -> {tts_url}")
         tts_resp = await http_client.post(tts_url, json=tts_payload, timeout=httpx.Timeout(1800.0, connect=30.0))
-        
         if tts_resp.status_code != 200:
             raise Exception(f"TTS backend failed: {tts_resp.text}")
             
         audio_path = os.path.join(work_dir, "voiceover.wav")
         with open(audio_path, 'wb') as f:
             f.write(tts_resp.content)
+        
+        voice_duration = await asyncio.to_thread(get_media_duration, audio_path)
+        print(f"[Director] Voiceover duration: {voice_duration}s")
 
-        # --- STEP 2: Generate Image ---
-        record_task(task_id, "content_director", "RUNNING (2/4: Generating Base Image)")
+        # --- STEP 2: Generate Music (Optional) ---
+        music_path = None
+        if req.music_prompt and "music" in BACKENDS:
+            record_task(task_id, "content_director", "RUNNING (2/5: Generating Soundtrack)")
+            music_url = f"{BACKENDS['music']}/v1/audio/async_generations"
+            music_payload = {
+                "prompt": req.music_prompt,
+                "audio_duration": voice_duration + 2.0, # Add a small buffer
+                "audio_format": "mp3"
+            }
+            print(f"[Director] Sending Music Request -> {music_url}")
+            music_init = await http_client.post(music_url, json=music_payload, timeout=httpx.Timeout(60.0, connect=10.0))
+            if music_init.status_code == 200:
+                music_task_id = music_init.json().get("task_id")
+                deadline = asyncio.get_event_loop().time() + POLL_DEADLINE
+                while True:
+                    if asyncio.get_event_loop().time() > deadline:
+                        print("[Director] Music task timed out, proceeding without music.")
+                        break
+                    m_poll = await http_client.get(f"{BACKENDS['music']}/v1/audio/tasks/{music_task_id}")
+                    m_data = m_poll.json()
+                    if m_data["status"] == "completed":
+                        music_result_url = m_data.get("data", [{}])[0].get("url")
+                        if music_result_url:
+                            target_url = music_result_url if music_result_url.startswith("http") else f"{BACKENDS['music']}{music_result_url}"
+                            m_download = await http_client.get(target_url)
+                            music_path = os.path.join(work_dir, "music_raw.mp3")
+                            with open(music_path, 'wb') as f:
+                                f.write(m_download.content)
+                        break
+                    elif m_data["status"] == "failed":
+                        print(f"[Director] Music failed: {m_data.get('error')}, skip music.")
+                        break
+                    await asyncio.sleep(poll_interval)
+            else:
+                print(f"[Director] Music init failed ({music_init.status_code}), skip music.")
+
+        # --- STEP 3: Generate Visuals ---
+        record_task(task_id, "content_director", "RUNNING (3/5: Generating Visuals)")
         vision_url = f"{BACKENDS['vision']}/v1/images/async_generate"
-        vision_payload = {
-            "prompt": req.image_prompt,
-            "cfg_normalization": True
-        }
+        vision_payload = {"prompt": req.image_prompt}
         
         print(f"[Director] Sending Vision Request -> {vision_url}")
         vision_resp = await http_client.post(vision_url, json=vision_payload, timeout=httpx.Timeout(1800.0, connect=30.0))
-        
         if vision_resp.status_code != 200:
-            raise Exception(f"Vision backend initialization failed: {vision_resp.text}")
+            raise Exception(f"Vision backend failed: {vision_resp.text}")
             
         vision_task_id = vision_resp.json().get("task_id")
-        
-        # Poll Vision
         image_url = None
         deadline = asyncio.get_event_loop().time() + POLL_DEADLINE
         while True:
@@ -271,12 +303,10 @@ async def run_director_task(task_id: str, req: DirectorRequest):
                 raise Exception(f"Vision task {vision_task_id} timed out")
             v_poll = await http_client.get(f"{BACKENDS['vision']}/v1/images/tasks/{vision_task_id}", timeout=httpx.Timeout(30.0))
             v_data = v_poll.json()
-            if v_data["status"] == "COMPLETED" or v_data["status"] == "completed":
+            if v_data["status"] in ("COMPLETED", "completed"):
                 image_url = v_data["data"][0]["url"]
-                if image_url.startswith("/"):
-                    image_url = f"{BACKENDS['vision']}{image_url}"
                 break
-            elif v_data["status"] == "FAILED" or v_data["status"] == "failed":
+            elif v_data["status"] in ("FAILED", "failed"):
                 raise Exception(f"Vision task failed: {v_data.get('error')}")
             await asyncio.sleep(poll_interval)
             
@@ -285,10 +315,9 @@ async def run_director_task(task_id: str, req: DirectorRequest):
         with open(image_path, 'wb') as f:
             f.write(img_download.content)
 
-        # --- STEP 3: Image-to-Video ---
-        record_task(task_id, "content_director", "RUNNING (3/4: Animating Image to Video)")
+        # Video (I2V)
         video_url = f"{BACKENDS['video']}/v1/video/async_i2v"
-        
+        vid_task_id = None
         with open(image_path, "rb") as img_file:
             vid_files = {"image": ("base_image.jpg", img_file, "image/jpeg")}
             vid_data = {"prompt": req.image_prompt, "seed": "-1"}
@@ -296,10 +325,8 @@ async def run_director_task(task_id: str, req: DirectorRequest):
             
         if vid_init.status_code != 200:
             raise Exception(f"Video backend initialization failed: {vid_init.text}")
-            
         vid_task_id = vid_init.json().get("task_id")
         
-        # Poll Video
         raw_video_path = None
         deadline = asyncio.get_event_loop().time() + POLL_DEADLINE
         while True:
@@ -319,17 +346,39 @@ async def run_director_task(task_id: str, req: DirectorRequest):
                 raise Exception(f"Video task failed: {vid_data.get('error')}")
             await asyncio.sleep(poll_interval)
 
-        # --- STEP 4: Muxing ---
-        record_task(task_id, "content_director", "RUNNING (4/4: Stitching Final Render)")
-        loop = asyncio.get_running_loop()
-        final_video_path = os.path.join(work_dir, "final_director_cut.mp4")
+        # --- STEP 4: Media Post-Processing ---
+        record_task(task_id, "content_director", "RUNNING (4/5: Syncing & Mixing)")
         
-        success = await loop.run_in_executor(None, mux_video_and_audio, raw_video_path, audio_path, final_video_path)
+        video_duration = await asyncio.to_thread(get_media_duration, raw_video_path)
+        final_video_source = raw_video_path
+
+        # Loop video if voiceover is longer
+        if voice_duration > video_duration + 0.5:
+            print(f"[Director] Looping video {video_duration}s to match voiceover {voice_duration}s")
+            looped_path = os.path.join(work_dir, "looped_video.mp4")
+            success = await asyncio.to_thread(loop_video_to_duration, raw_video_path, voice_duration, looped_path)
+            if success:
+                final_video_source = looped_path
+
+        # Mix audio if music is present
+        final_audio_source = audio_path
+        if music_path:
+            print("[Director] Mixing voiceover and background music")
+            mixed_audio_path = os.path.join(work_dir, "mixed_audio.wav")
+            success = await asyncio.to_thread(mix_audio_files, audio_path, music_path, mixed_audio_path, req.music_volume)
+            if success:
+                final_audio_source = mixed_audio_path
+
+        # --- STEP 5: Final Mux ---
+        record_task(task_id, "content_director", "RUNNING (5/5: Final Muxing)")
+        final_output_path = os.path.join(work_dir, "final_director_cut.mp4")
+        
+        success = await asyncio.to_thread(mux_video_and_audio, final_video_source, final_audio_source, final_output_path)
         if not success:
-            raise Exception("FFmpeg failed to mux the final video.")
+            raise Exception("FFmpeg failed to mux the final director cut.")
             
         record_task(task_id, "content_director", "COMPLETED")
-        print(f"[Director] Completed Workflow {task_id}")
+        print(f"[Director] Completed Production-Grade Workflow {task_id}")
 
     except Exception as e:
         import traceback
