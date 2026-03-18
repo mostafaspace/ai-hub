@@ -431,14 +431,21 @@ async def run_audit_task(task_id: str, req: AuditRequest):
             with open(local_media_path, "wb") as f:
                 f.write(resp.content)
         else:
-            if os.path.exists(req.media_url):
-                shutil.copy2(req.media_url, local_media_path)
+            # Handle relative /outputs/ or direct relative paths
+            resolve_path = req.media_url
+            if resolve_path.startswith("/outputs/"):
+                resolve_path = resolve_path.replace("/outputs/", "", 1)
+                resolve_path = os.path.join(OUTPUTS_DIR, resolve_path)
+            
+            if os.path.exists(resolve_path):
+                shutil.copy2(resolve_path, local_media_path)
             else:
+                # Last resort fallback to basename in OUTPUTS_DIR
                 alt_path = os.path.join(OUTPUTS_DIR, os.path.basename(req.media_url))
                 if os.path.exists(alt_path):
                     shutil.copy2(alt_path, local_media_path)
                 else:
-                    raise Exception(f"Media path not found: {req.media_url}")
+                    raise Exception(f"Media path not found: {req.media_url} (Resolved: {resolve_path})")
 
         audit_report: dict = {
             "task_id": task_id,
@@ -826,6 +833,29 @@ async def hub_tasks():
             "time_ago": _time_ago(t["started_at"]),
         })
     return {"tasks": formatted}
+
+
+@app.get("/v1/hub/tasks/{task_id}")
+async def hub_task_status(task_id: str):
+    """
+    Retrieve status for a specific task.
+    """
+    for t in recent_tasks:
+        if t["task_id"] == task_id:
+            # Add output_url for Director tasks if completed
+            data = dict(t)
+            if t["status"] == "COMPLETED" and t["workflow"] == "content_director":
+                data["output_url"] = f"/outputs/{task_id}/final_director_cut.mp4"
+            return data
+            
+    # Also check audit directory
+    audit_report_path = os.path.join(OUTPUTS_DIR, "audit", task_id, "report.json")
+    if os.path.exists(audit_report_path):
+        with open(audit_report_path, "r") as f:
+            report = json.load(f)
+        return {"task_id": task_id, "workflow": "content_auditor", "status": "COMPLETED", "analysis": report}
+
+    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
 
 @app.post("/v1/hub/unload/{service}")
