@@ -9,7 +9,7 @@ This API uses a background task queue. Generating images takes a few minutes, so
 
 ## Server Details
 
--   **Base URL**: `http://192.168.1.26:9000`
+- **Base URL**: `http://{{HUB_IP}}:9000`
 
 ## 2-Step Agent Workflow
 

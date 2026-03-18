@@ -9,7 +9,7 @@ This skill provides the API specification for the LTX-2 Video server. Agents can
 
 ## Server Details
 
-- **Base URL**: `http://192.168.1.26:9000`
+- **Base URL**: `http://{{HUB_IP}}:9000`
 - **OpenAPI Spec**: `openapi.yaml` (in this directory)
 
 > [!IMPORTANT]

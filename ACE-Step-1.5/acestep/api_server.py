@@ -26,6 +26,8 @@ import traceback
 import tempfile
 import urllib.parse
 from collections import deque
+# Add parent dir for api_utils import
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -1873,12 +1875,6 @@ def create_app() -> FastAPI:
                     async with app.state.generation_lock:
                         result = await loop.run_in_executor(executor, _blocking_generate)
                 
-                # Update last_used timestamps AGAIN after generation completes to reset idle timer
-                now = time.time()
-                app.state.last_used[h_key] = now
-                if status_flags["llm_available"]:
-                    app.state.last_used["llm_handler"] = now
-
                 job_store.mark_succeeded(job_id, result)
                 _update_local_cache(job_id, result, "succeeded")
             except Exception as e:
@@ -1890,6 +1886,11 @@ def create_app() -> FastAPI:
                 # Update local cache
                 _update_local_cache(job_id, None, "failed")
             finally:
+                # Update last_used timestamps AGAIN after generation completes to reset idle timer
+                now = time.time()
+                app.state.last_used[h_key] = now
+                if status_flags["llm_available"]:
+                    app.state.last_used["llm_handler"] = now
                 app.state.is_generating = False
                 dt = max(0.0, time.time() - t0)
                 async with app.state.stats_lock:
@@ -2039,6 +2040,11 @@ def create_app() -> FastAPI:
         executor.shutdown(wait=False, cancel_futures=True)
 
     app = FastAPI(title="ACE-Step API", version="1.0", lifespan=lifespan)
+    try:
+        from api_utils import GracefulJSONRoute
+        app.router.route_class = GracefulJSONRoute
+    except ImportError as e:
+        print(f"[API Server] Warning: Could not load GracefulJSONRoute: {e}")
 
     async def _queue_position(job_id: str) -> int:
         async with app.state.pending_lock:

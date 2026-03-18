@@ -4,7 +4,7 @@ This skill empowers the agent to self-audit its creative outputs (video, audio, 
 
 ## API Endpoint
 
-- **URL**: `http://{{ORCHESTRATOR_IP}}:8000/v1/workflows/audit`
+- **URL**: `http://{{HUB_IP}}:9000/v1/workflows/audit`
 - **Method**: `POST`
 - **Payload Structure**:
   ```json

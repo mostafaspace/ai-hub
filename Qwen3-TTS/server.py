@@ -489,17 +489,19 @@ async def generate_speech_stream(req: TTSSpeechRequest):
         )
         yield header
 
-        total_bytes = 0
-        while True:
-            chunk = await streamer.audio_queue.get()
-            if chunk is None:
-                break
-            yield chunk
-            total_bytes += len(chunk)
+        try:
+            total_bytes = 0
+            while True:
+                chunk = await streamer.audio_queue.get()
+                if chunk is None:
+                    break
+                yield chunk
+                total_bytes += len(chunk)
 
-        print(f"[Stream] Finished. Total PCM: {total_bytes / 1024:.1f} KB")
-        manager.is_generating = False
-        manager.touch()
+            print(f"[Stream] Finished. Total PCM: {total_bytes / 1024:.1f} KB")
+        finally:
+            manager.is_generating = False
+            manager.touch()
 
     return StreamingResponse(
         audio_generator(),
@@ -628,6 +630,7 @@ async def generate_voice_clone(
     """
     try:
         model = manager.get_model("base")
+        manager.is_generating = True
         
         print(f"Cloning Voice. Text: '{text[:30]}...' Ref: {ref_audio.filename}")
         
@@ -701,6 +704,7 @@ async def generate_voice_clone(
         # Cleanup is handled in finally block of inner try/except
         raise HTTPException(status_code=500, detail=str(e))
     finally:
+        manager.is_generating = False
         manager.touch()
 
 
