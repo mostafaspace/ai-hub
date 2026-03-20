@@ -1,4 +1,4 @@
-﻿import socket
+import socket
 import os
 
 def get_local_ip():
@@ -49,11 +49,11 @@ ASR_MODEL_PATH = "Qwen/Qwen2-Audio-7B-Instruct"
 VISION_MODEL = "Tongyi-MAI/Z-Image"
 VISION_OFFLOAD_CPU = False  # Disabled: 2 GPUs (5090 32GB + 4070Ti 12GB) can hold the full model
 
-# LTX-2 Video Models
-VIDEO_MODEL_BASE = os.path.join(HF_HOME, "Lightricks/LTX-2/ltx-2-19b-dev-fp8.safetensors")
+# LTX-2.3 Video Models
+VIDEO_MODEL_BASE = os.path.join(HF_HOME, "Lightricks/LTX-2.3/ltx-2.3-22b-dev-fp8.safetensors")
 VIDEO_GEMMA_ROOT = os.path.join(HF_HOME, "google/gemma-3-12b-it-qat-q4_0-unquantized")
-VIDEO_DISTILLED_LORA = os.path.join(HF_HOME, "Lightricks/LTX-2/ltx-2-19b-distilled-lora-384.safetensors")
-VIDEO_SPATIAL_UPSAMPLER = os.path.join(HF_HOME, "Lightricks/LTX-2/ltx-2-spatial-upscaler-x2-1.0.safetensors")
+VIDEO_DISTILLED_LORA = os.path.join(HF_HOME, "Lightricks/LTX-2.3/ltx-2.3-22b-distilled-lora-384.safetensors")
+VIDEO_SPATIAL_UPSAMPLER = os.path.join(HF_HOME, "Lightricks/LTX-2.3/ltx-2.3-spatial-upscaler-x2-1.1.safetensors")
 
 # --- Device Configuration ---
 # Default strategy: "auto" (Accelerate), "cuda", or "cpu"

@@ -61,10 +61,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 
 # ---- LTX-2 Specific Config (Ideally this comes from config.py) ----
 # We use standard defaults for 19B if config doesn't specify.
-LTX_MODEL_PATH = getattr(config, "VIDEO_MODEL_BASE", os.path.join(config.HF_HOME, "Lightricks/LTX-2/ltx-2-19b-dev-fp8.safetensors"))
+LTX_MODEL_PATH = getattr(config, "VIDEO_MODEL_BASE", os.path.join(config.HF_HOME, "Lightricks/LTX-2.3/ltx-2.3-22b-dev-fp8.safetensors"))
 GEMMA_ROOT = getattr(config, "VIDEO_GEMMA_ROOT", os.path.join(config.HF_HOME, "google/gemma-3-12b-it-qat-q4_0-unquantized"))
-DISTILLED_LORA = getattr(config, "VIDEO_DISTILLED_LORA", os.path.join(config.HF_HOME, "Lightricks/LTX-2/ltx-2-19b-distilled-lora-384.safetensors"))
-SPATIAL_UPSAMPLER = getattr(config, "VIDEO_SPATIAL_UPSAMPLER", os.path.join(config.HF_HOME, "Lightricks/LTX-2/ltx-2-spatial-upscaler-x2-1.0.safetensors"))
+DISTILLED_LORA = getattr(config, "VIDEO_DISTILLED_LORA", os.path.join(config.HF_HOME, "Lightricks/LTX-2.3/ltx-2.3-22b-distilled-lora-384.safetensors"))
+SPATIAL_UPSAMPLER = getattr(config, "VIDEO_SPATIAL_UPSAMPLER", os.path.join(config.HF_HOME, "Lightricks/LTX-2.3/ltx-2.3-spatial-upscaler-x2-1.1.safetensors"))
 
 
 # --- Model Management (Auto-Unload via Thread RLock) ---

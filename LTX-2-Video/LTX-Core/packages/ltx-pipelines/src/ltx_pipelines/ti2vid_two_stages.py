@@ -102,7 +102,7 @@ class TI2VidTwoStagesPipeline:
         stepper = EulerDiffusionStep()
         dtype = torch.bfloat16
 
-        text_encoder = self.stage_1_model_ledger.text_encoder()
+        text_encoder = self.stage_1_model_ledger.text_encoder(device="cpu")
         if enhance_prompt:
             prompt = generate_enhanced_prompt(
                 text_encoder, prompt, images[0][0] if len(images) > 0 else None, seed=seed
@@ -111,7 +111,7 @@ class TI2VidTwoStagesPipeline:
         v_context_p, a_context_p = context_p
         v_context_n, a_context_n = context_n
 
-        torch.cuda.synchronize()
+        # No need for synchronize if it was on CPU, but doesn't hurt.
         del text_encoder
         cleanup_memory()
 

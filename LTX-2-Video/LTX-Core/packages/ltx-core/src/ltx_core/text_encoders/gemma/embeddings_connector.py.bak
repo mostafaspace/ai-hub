@@ -205,18 +205,8 @@ class Embeddings1DConnectorConfigurator(ModelConfigurator[Embeddings1DConnector]
         rope_type = LTXRopeType(config.get("rope_type", "interleaved"))
         double_precision_rope = config.get("frequencies_precision", False) == "float64"
         pe_max_pos = config.get("connector_positional_embedding_max_pos", [1])
-        
-        # LTX-2.3 22B specifics
-        num_attention_heads = config.get("connector_num_attention_heads", 30)
-        num_layers = config.get("connector_num_layers", 2)
-        attention_head_dim = config.get("connector_attention_head_dim", 128)
-        num_learnable_registers = config.get("connector_num_learnable_registers", 128)
 
         connector = Embeddings1DConnector(
-            num_attention_heads=num_attention_heads,
-            num_layers=num_layers,
-            attention_head_dim=attention_head_dim,
-            num_learnable_registers=num_learnable_registers,
             positional_embedding_max_pos=pe_max_pos,
             rope_type=rope_type,
             double_precision_rope=double_precision_rope,

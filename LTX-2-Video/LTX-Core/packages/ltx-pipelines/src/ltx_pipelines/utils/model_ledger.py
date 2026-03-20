@@ -225,14 +225,15 @@ class ModelLedger:
 
         return self.vae_encoder_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device).eval()
 
-    def text_encoder(self) -> AVGemmaTextEncoderModel:
+    def text_encoder(self, device: torch.device | None = None) -> AVGemmaTextEncoderModel:
         if not hasattr(self, "text_encoder_builder"):
             raise ValueError(
                 "Text encoder not initialized. Please provide a checkpoint path and gemma root path to the "
                 "ModelLedger constructor."
             )
 
-        return self.text_encoder_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device).eval()
+        target_device = device if device is not None else self._target_device()
+        return self.text_encoder_builder.build(device=target_device, dtype=self.dtype).to(target_device).eval()
 
     def audio_decoder(self) -> AudioDecoder:
         if not hasattr(self, "audio_decoder_builder"):

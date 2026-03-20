@@ -53,19 +53,12 @@ class AVGemmaTextEncoderModel(GemmaTextEncoderModelBase):
         self.audio_embeddings_connector = audio_embeddings_connector.to(dtype=dtype)
 
     def _run_connectors(
-        self, encoded_input: torch.Tensor | tuple[torch.Tensor, torch.Tensor], attention_mask: torch.Tensor
+        self, encoded_input: torch.Tensor, attention_mask: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        if isinstance(encoded_input, tuple):
-            video_input, audio_input = encoded_input
-        else:
-            video_input = encoded_input
-            audio_input = encoded_input
-
-        dtype = video_input.dtype
-        connector_attention_mask = self._convert_to_additive_mask(attention_mask, dtype)
+        connector_attention_mask = self._convert_to_additive_mask(attention_mask, encoded_input.dtype)
 
         encoded, encoded_connector_attention_mask = self.embeddings_connector(
-            video_input,
+            encoded_input,
             connector_attention_mask,
         )
 
@@ -74,7 +67,7 @@ class AVGemmaTextEncoderModel(GemmaTextEncoderModelBase):
         attention_mask = attention_mask.reshape([encoded.shape[0], encoded.shape[1], 1])
         encoded = encoded * attention_mask
 
-        encoded_for_audio, _ = self.audio_embeddings_connector(audio_input, connector_attention_mask)
+        encoded_for_audio, _ = self.audio_embeddings_connector(encoded_input, connector_attention_mask)
 
         return encoded, encoded_for_audio, attention_mask.squeeze(-1)
 
@@ -87,23 +80,9 @@ class AVGemmaTextEncoderModel(GemmaTextEncoderModelBase):
 class AVGemmaTextEncoderModelConfigurator(ModelConfigurator[AVGemmaTextEncoderModel]):
     @classmethod
     def from_config(cls: type["AVGemmaTextEncoderModel"], config: dict) -> "AVGemmaTextEncoderModel":
-        # Extract specific configs for video and audio connectors if they exist
-        transformer_config = config.get("transformer", {})
-        
-        # Audio connector might have its own head count/dim
-        audio_config = {
-            "transformer": {
-                **transformer_config,
-                "connector_num_attention_heads": transformer_config.get("audio_connector_num_attention_heads", 30),
-                "connector_attention_head_dim": transformer_config.get("audio_connector_attention_head_dim", 128),
-                # Layers count seems shared in config, but we can override if needed
-            }
-        }
-        
         feature_extractor_linear = GemmaFeaturesExtractorProjLinear.from_config(config)
         embeddings_connector = Embeddings1DConnectorConfigurator.from_config(config)
-        audio_embeddings_connector = Embeddings1DConnectorConfigurator.from_config(audio_config)
-        
+        audio_embeddings_connector = Embeddings1DConnectorConfigurator.from_config(config)
         gemma_config = Gemma3Config.from_dict(GEMMA3_CONFIG_FOR_LTX.to_dict())
         # HOTFIX: The unquantized Gemma-3 model requires 'rope_local_base_freq' and 'rope_theta'
         if not hasattr(gemma_config.text_config, "rope_local_base_freq"):
@@ -125,17 +104,10 @@ class AVGemmaTextEncoderModelConfigurator(ModelConfigurator[AVGemmaTextEncoderMo
 
 AV_GEMMA_TEXT_ENCODER_KEY_OPS = (
     SDOps("AV_GEMMA_TEXT_ENCODER_KEY_OPS")
-    # 1. Map the feature extractor (handling LTX-2.3 dual and LTX-2.0 single)
-    .with_matching(prefix="text_embedding_projection.video_aggregate_embed.")
-    .with_replacement("text_embedding_projection.video_aggregate_embed.", "feature_extractor_linear.video_aggregate_embed.")
-    .with_matching(prefix="text_embedding_projection.audio_aggregate_embed.")
-    .with_replacement("text_embedding_projection.audio_aggregate_embed.", "feature_extractor_linear.audio_aggregate_embed.")
-    .with_matching(prefix="text_embedding_projection.aggregate_embed.")
-    .with_replacement("text_embedding_projection.aggregate_embed.", "feature_extractor_linear.aggregate_embed.")
-    # Fallback for old mapping if someone still uses 'text_embedding_projection.' directly
+    # 1. Map the feature extractor
     .with_matching(prefix="text_embedding_projection.")
     .with_replacement("text_embedding_projection.", "feature_extractor_linear.")
-    # 2. Map the connectors
+    # 2. Map the connectors (fixing the swapped prefixes from before)
     .with_matching(prefix="model.diffusion_model.video_embeddings_connector.")
     .with_replacement("model.diffusion_model.video_embeddings_connector.", "embeddings_connector.")
     .with_matching(prefix="model.diffusion_model.audio_embeddings_connector.")

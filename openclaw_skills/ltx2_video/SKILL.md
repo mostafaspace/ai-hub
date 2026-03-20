@@ -3,9 +3,9 @@ name: ltx2_video
 description: API documentation for the LTX-2 Video server. Supports text-to-video (T2V) and image-to-video (I2V) generation with audio.
 ---
 
-# LTX-2 Video Generation API
+# LTX-2.3 Video Generation API
 
-This skill provides the API specification for the LTX-2 Video server. Agents can use this to generate videos from text prompts or input images.
+This skill provides the API specification for the LTX-2.3 Video server. LTX-2.3 brings improved audio-visual quality and synchronization over LTX-2. Agents can use this to generate videos from text prompts or input images.
 
 ## Server Details
 
