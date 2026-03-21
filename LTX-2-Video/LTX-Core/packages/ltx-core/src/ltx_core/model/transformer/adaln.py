@@ -14,7 +14,7 @@ class AdaLayerNormSingle(torch.nn.Module):
         use_additional_conditions (`bool`): To use additional conditions for normalization or not.
     """
 
-    def __init__(self, embedding_dim: int, embedding_coefficient: int = 6):
+    def __init__(self, embedding_dim: int, embedding_coefficient: int = 9):
         super().__init__()
 
         self.emb = PixArtAlphaCombinedTimestepSizeEmbeddings(

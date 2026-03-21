@@ -70,7 +70,13 @@ class SingleGPUModelBuilder(Generic[ModelType], ModelBuilderProtocol[ModelType],
         uninitialized_buffers = [name for name, buffer in meta_model.named_buffers() if str(buffer.device) == "meta"]
         if uninitialized_params or uninitialized_buffers:
             logger.warning(f"Uninitialized parameters or buffers: {uninitialized_params + uninitialized_buffers}")
-            return meta_model
+            for module in meta_model.modules():
+                for param_name, param in module.named_parameters(recurse=False):
+                    if str(param.device) == "meta":
+                        param.data = torch.zeros_like(param, device=device)
+                for buf_name, buf in module.named_buffers(recurse=False):
+                    if buf is not None and str(buf.device) == "meta":
+                        module.register_buffer(buf_name, torch.zeros_like(buf, device=device))
         retval = meta_model.to(device)
         return retval
 

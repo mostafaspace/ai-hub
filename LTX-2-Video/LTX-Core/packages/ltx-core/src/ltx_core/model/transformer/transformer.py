@@ -54,7 +54,7 @@ class BasicAVTransformerBlock(torch.nn.Module):
                 apply_gated_attention=video.apply_gated_attention,
             )
             self.ff = FeedForward(video.dim, dim_out=video.dim)
-            self.scale_shift_table = torch.nn.Parameter(torch.empty(6, video.dim))
+            self.scale_shift_table = torch.nn.Parameter(torch.empty(9, video.dim))
 
         if audio is not None:
             self.audio_attn1 = Attention(
@@ -78,7 +78,7 @@ class BasicAVTransformerBlock(torch.nn.Module):
                 apply_gated_attention=audio.apply_gated_attention,
             )
             self.audio_ff = FeedForward(audio.dim, dim_out=audio.dim)
-            self.audio_scale_shift_table = torch.nn.Parameter(torch.empty(6, audio.dim))
+            self.audio_scale_shift_table = torch.nn.Parameter(torch.empty(9, audio.dim))
 
         if audio is not None and video is not None:
             # Q: Video, K,V: Audio
@@ -266,7 +266,7 @@ class BasicAVTransformerBlock(torch.nn.Module):
 
         if run_vx:
             vshift_mlp, vscale_mlp, vgate_mlp = self.get_ada_values(
-                self.scale_shift_table, vx.shape[0], video.timesteps, slice(3, None)
+                self.scale_shift_table, vx.shape[0], video.timesteps, slice(3, 6)
             )
             vx_scaled = rms_norm(vx, eps=self.norm_eps) * (1 + vscale_mlp) + vshift_mlp
             vx = vx + self.ff(vx_scaled) * vgate_mlp
@@ -275,7 +275,7 @@ class BasicAVTransformerBlock(torch.nn.Module):
 
         if run_ax:
             ashift_mlp, ascale_mlp, agate_mlp = self.get_ada_values(
-                self.audio_scale_shift_table, ax.shape[0], audio.timesteps, slice(3, None)
+                self.audio_scale_shift_table, ax.shape[0], audio.timesteps, slice(3, 6)
             )
             ax_scaled = rms_norm(ax, eps=self.norm_eps) * (1 + ascale_mlp) + ashift_mlp
             ax = ax + self.audio_ff(ax_scaled) * agate_mlp

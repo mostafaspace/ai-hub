@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
 
 import sys
+import torch
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "LTX-Core", "packages", "ltx-core", "src")))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "LTX-Core", "packages", "ltx-pipelines", "src")))
@@ -37,14 +38,11 @@ except Exception as e:
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "LTX-Core", "packages", "ltx-pipelines", "src")))
 
 # We'll need ltx_pipelines, assuming we run this from a script that sets PYTHONPATH
-try:
-    from ltx_pipelines.ti2vid_two_stages import TI2VidTwoStagesPipeline
-    from ltx_core.components.guiders import MultiModalGuiderParams
-    from ltx_core.loader import LTXV_LORA_COMFY_RENAMING_MAP, LoraPathStrengthAndSDOps
-    from ltx_core.quantization import QuantizationPolicy
-    from ltx_pipelines.utils.constants import DEFAULT_NEGATIVE_PROMPT
-except ImportError:
-    print("Warning: ltx-pipelines not found. Ensure the package is installed and accessible.")
+from ltx_pipelines.ti2vid_two_stages import TI2VidTwoStagesPipeline
+from ltx_core.components.guiders import MultiModalGuiderParams
+from ltx_core.loader import LTXV_LORA_COMFY_RENAMING_MAP, LoraPathStrengthAndSDOps
+from ltx_core.quantization import QuantizationPolicy
+from ltx_pipelines.utils.constants import DEFAULT_NEGATIVE_PROMPT
 
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))

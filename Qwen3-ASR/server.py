@@ -104,11 +104,11 @@ class ModelManager:
             
             logger.info(f"Loading Qwen2-Audio model from {MODEL_PATH} on {DEVICE_MAP}...")
             try:
-                self.processor = AutoProcessor.from_pretrained(MODEL_PATH, trust_remote_code=True)
+                self.processor = AutoProcessor.from_pretrained(MODEL_PATH, trust_remote_code=False)
                 self.model = Qwen2AudioForConditionalGeneration.from_pretrained(
                     MODEL_PATH,
                     device_map=DEVICE_MAP,
-                    trust_remote_code=True,
+                    trust_remote_code=False,
                     dtype=torch.float16 if DEVICE == "cuda" else torch.float32
                 )
                 self.model.eval()
