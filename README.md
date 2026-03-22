@@ -1,10 +1,16 @@
 # AI-Hub 🚀
 
-Welcome to **AI-Hub**, the unified gateway for open source AI's suite of powerful generative models and services. This repository serves as a central orchestrator, providing a single point of entry to state-of-the-art Text-to-Speech (TTS), Music Generation, Speech Recognition, and Image Generation capabilities.
+Welcome to **AI-Hub**, the unified gateway for open-source AI's suite of powerful generative models and services. This repository serves as a central orchestrator, providing a single point of entry to state-of-the-art Text-to-Speech (TTS), Music Generation, Speech Recognition, Image Generation, and Video Generation capabilities.
 
-## 🌟 Overview
+## 🌟 Project Overview
 
-AI-Hub is designed to be a modular, scalable, and easy-to-use ecosystem for AI-powered creativity. Whether you're looking to generate expressive speech or compose unique musical tracks, AI-Hub brings these services together under one roof with a unified management system.
+AI-Hub provides a single, unified API to access multiple state-of-the-art AI models.
+
+<p align="center">
+  <img src="./ai_hub_diagram.png" width="800" alt="AI-Hub Architecture Diagram">
+</p>
+
+---
 
 ## ⚡ Current Services
 
