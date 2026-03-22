@@ -161,11 +161,11 @@ class VideoGenerationRequest(BaseModel):
     width: int = Field(default=768, description="Base width before upsampling")
     num_frames: int = Field(default=121, description="Number of frames")
     frame_rate: float = Field(default=25.0, description="FPS for the mp4 file")
-    num_inference_steps: int = Field(default=60, description="Denoising steps")
+    num_inference_steps: int = Field(default=11, description="Denoising steps (11 for 8+3 Distilled)")
     seed: int = Field(default=42, description="Random seed")
     
     # Advanced Optional Guider params mapped
-    cfg_scale_video: float = 4.0
+    cfg_scale_video: float = 3.5
     stg_scale_video: float = 1.2
     cfg_scale_audio: float = 7.0
     modality_scale: float = 3.0
@@ -346,9 +346,9 @@ async def async_i2v(
     width: int = Form(768),
     num_frames: int = Form(121),
     frame_rate: float = Form(25.0),
-    num_inference_steps: int = Form(60),
+    num_inference_steps: int = Form(11),
     seed: int = Form(42),
-    cfg_scale_video: float = Form(4.0),
+    cfg_scale_video: float = Form(3.5),
     stg_scale_video: float = Form(1.2)
 ):
     """Submit an I2V job. Returns immediately with a task_id. Poll GET /v1/video/tasks/{task_id}."""
@@ -471,9 +471,9 @@ async def generate_i2v(
     width: int = Form(768),
     num_frames: int = Form(121),
     frame_rate: float = Form(25.0),
-    num_inference_steps: int = Form(60),
+    num_inference_steps: int = Form(11),
     seed: int = Form(42),
-    cfg_scale_video: float = Form(4.0),
+    cfg_scale_video: float = Form(3.5),
     stg_scale_video: float = Form(1.2)
 ):
     """Image to Video Generation."""
