@@ -247,6 +247,23 @@ def _warn_if_quality_risky(height: int, width: int, num_frames: int, frame_rate:
         )
 
 
+def _resolve_enhance_prompt(prompt: str, enhance_prompt: bool, has_image_conditioning: bool) -> bool:
+    if not enhance_prompt:
+        return False
+
+    char_limit = 220 if has_image_conditioning else 500
+    if len(prompt) > char_limit:
+        logger.info(
+            "[LTX-2] Disabling prompt enhancement for a %s prompt (%s chars > %s-char safety limit).",
+            "conditioned" if has_image_conditioning else "text-only",
+            len(prompt),
+            char_limit,
+        )
+        return False
+
+    return True
+
+
 def _encode_video_file(video, audio, num_frames: int, frame_rate: float, output_path: str) -> None:
     from ltx_pipelines.utils.media_io import encode_video
     from ltx_pipelines.utils.constants import AUDIO_SAMPLE_RATE
@@ -336,6 +353,11 @@ def _process_async_t2v(task_id: str, prompt: str, height: int, width: int,
                 cfg_scale_audio=cfg_scale_audio,
                 modality_scale=modality_scale,
             )
+            enhance_prompt = _resolve_enhance_prompt(
+                prompt=prompt,
+                enhance_prompt=enhance_prompt,
+                has_image_conditioning=False,
+            )
             logger.info(f"[Task {task_id}] T2V generating: '{prompt[:50]}...'")
             with torch.inference_mode():
                 video, audio = pipeline(
@@ -379,6 +401,11 @@ def _process_async_i2v(task_id: str, image_path: str, prompt: str,
                 modality_scale=DEFAULT_MODALITY_SCALE,
             )
             image_conditions = [(image_path, 0, 1.0)]
+            enhance_prompt = _resolve_enhance_prompt(
+                prompt=prompt,
+                enhance_prompt=enhance_prompt,
+                has_image_conditioning=True,
+            )
             logger.info(f"[Task {task_id}] I2V generating: '{prompt[:50]}...'")
             with torch.inference_mode():
                 video, audio = pipeline(
@@ -484,6 +511,11 @@ def generate_t2v(req: VideoGenerationRequest):
                 cfg_scale_audio=req.cfg_scale_audio,
                 modality_scale=req.modality_scale,
             )
+            enhance_prompt = _resolve_enhance_prompt(
+                prompt=req.prompt,
+                enhance_prompt=req.enhance_prompt,
+                has_image_conditioning=False,
+            )
 
             print(f"[LTX-2] Starting Generation (seed={req.seed}): {req.prompt[:50]}...")
             
@@ -506,7 +538,7 @@ def generate_t2v(req: VideoGenerationRequest):
                     video_guider_params=video_guider,
                     audio_guider_params=audio_guider,
                     images=[],
-                    enhance_prompt=req.enhance_prompt,
+                    enhance_prompt=enhance_prompt,
                 )
                 _encode_video_file(video, audio, req.num_frames, req.frame_rate, temp_out.name)
             
@@ -572,6 +604,11 @@ async def generate_i2v(
             
             # Format: [(path, frame_index, strength)]
             image_conditions = [(temp_in_path, 0, 1.0)]
+            enhance_prompt = _resolve_enhance_prompt(
+                prompt=prompt,
+                enhance_prompt=enhance_prompt,
+                has_image_conditioning=True,
+            )
 
             with torch.inference_mode():
                 video, audio = pipeline(

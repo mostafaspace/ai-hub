@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import Iterator
 
 import torch
@@ -38,6 +39,10 @@ from ltx_pipelines.utils.media_io import encode_video
 from ltx_pipelines.utils.types import PipelineComponents
 
 device = get_device()
+SKIP_AUDIO_DECODE = os.getenv("LTX_SKIP_AUDIO_DECODE", "1") == "1"
+# Final VAE decode is the most crash-prone step on this Windows box. Force it
+# to CPU so we trade speed for reliability and can actually finish i2v renders.
+VAE_DECODE_DEVICE = "cpu"
 
 
 class TI2VidTwoStagesPipeline:
@@ -277,43 +282,68 @@ class TI2VidTwoStagesPipeline:
         cleanup_memory()
         print(f"[LTX-2] Cleanup complete. VRAM/RAM freed.")
 
-        # Use more aggressive 384px tiling for VAE decode to avoid VRAM spikes on 720p/1080p
+        # Use more aggressive tiling for VAE decode to avoid VRAM spikes at the
+        # end of generation. 256px tiles are slower but more robust on this box.
         from ltx_core.model.video_vae import SpatialTilingConfig, TemporalTilingConfig, VAE_DECODER_COMFY_KEYS_FILTER
         custom_tiling = TilingConfig(
-            spatial_config=SpatialTilingConfig(tile_size_in_pixels=384, tile_overlap_in_pixels=64),
+            spatial_config=SpatialTilingConfig(tile_size_in_pixels=256, tile_overlap_in_pixels=64),
             temporal_config=TemporalTilingConfig(tile_size_in_frames=64, tile_overlap_in_frames=24)
         )
         from ltx_core.model.audio_vae import AUDIO_VAE_DECODER_COMFY_KEYS_FILTER, VOCODER_COMFY_KEYS_FILTER
 
-        print(f"[LTX-2] Starting VAE decoding (81-frame sequence, 384px tiling)...")
+        decode_device = torch.device("cpu") if VAE_DECODE_DEVICE == "cpu" else torch.device(self.device)
+        decode_generator = None if decode_device.type == "cpu" else generator
+        video_latent_for_decode = video_state.latent
+        del video_state
+        if SKIP_AUDIO_DECODE:
+            del audio_state
+        cleanup_memory()
+
+        print(
+            f"[LTX-2] Starting VAE decoding ({num_frames}-frame sequence, "
+            f"{custom_tiling.spatial_config.tile_size_in_pixels}px tiling, device={decode_device})..."
+        )
         print(f"[LTX-2] Building VAE video decoder...")
-        vae_video_decoder = self.stage_2_model_ledger.video_decoder()
+        if decode_device.type == "cpu":
+            print("[LTX-2] Offloading final video decode to CPU for stability.")
+            video_latent_for_decode = video_latent_for_decode.to("cpu", dtype=self.dtype)
+            cleanup_memory()
+            vae_video_decoder = (
+                self.stage_2_model_ledger.vae_decoder_builder.build(device=torch.device("cpu"), dtype=self.dtype)
+                .to("cpu")
+                .eval()
+            )
+        else:
+            vae_video_decoder = self.stage_2_model_ledger.video_decoder()
         print(f"[LTX-2] Video VAE decoder built. Popping from registry...")
         self.registry.pop([self.stage_2_model_ledger.checkpoint_path], VAE_DECODER_COMFY_KEYS_FILTER)
         
         print(f"[LTX-2] Creating VAE decoding iterator...")
         decoded_video = vae_decode_video(
-            video_state.latent, vae_video_decoder, custom_tiling, generator
+            video_latent_for_decode, vae_video_decoder, custom_tiling, decode_generator
         )
         print(f"[LTX-2] VAE decoder built and iterator created.")
 
-        try:
-            print(f"[LTX-2] Building VAE audio decoder...")
-            vae_audio_decoder = self.stage_2_model_ledger.audio_decoder()
-            print(f"[LTX-2] Audio VAE decoder built. Popping from registry...")
-            self.registry.pop([self.stage_2_model_ledger.checkpoint_path], AUDIO_VAE_DECODER_COMFY_KEYS_FILTER)
-            
-            vocoder = self.stage_2_model_ledger.vocoder()
-            self.registry.pop([self.stage_2_model_ledger.checkpoint_path], VOCODER_COMFY_KEYS_FILTER)
-
-            decoded_audio = vae_decode_audio(
-                audio_state.latent, vae_audio_decoder, vocoder
-            )
-            print(f"[LTX-2] Audio decoded.")
-        except Exception as e:
-            print(f"[LTX-2] Audio decoding failed/skipped (Incompatible architecture): {e}")
-            # Return silent audio (1 second for dummy)
+        if SKIP_AUDIO_DECODE:
+            print("[LTX-2] Skipping audio decode to preserve memory for video quality.")
             decoded_audio = torch.zeros((2, 16000), dtype=torch.float32)
+        else:
+            try:
+                print(f"[LTX-2] Building VAE audio decoder...")
+                vae_audio_decoder = self.stage_2_model_ledger.audio_decoder()
+                print(f"[LTX-2] Audio VAE decoder built. Popping from registry...")
+                self.registry.pop([self.stage_2_model_ledger.checkpoint_path], AUDIO_VAE_DECODER_COMFY_KEYS_FILTER)
+                
+                vocoder = self.stage_2_model_ledger.vocoder()
+                self.registry.pop([self.stage_2_model_ledger.checkpoint_path], VOCODER_COMFY_KEYS_FILTER)
+
+                decoded_audio = vae_decode_audio(
+                    audio_state.latent, vae_audio_decoder, vocoder
+                )
+                print(f"[LTX-2] Audio decoded.")
+            except Exception as e:
+                print(f"[LTX-2] Audio decoding failed/skipped (Incompatible architecture): {e}")
+                decoded_audio = torch.zeros((2, 16000), dtype=torch.float32)
 
 
         return decoded_video, decoded_audio
