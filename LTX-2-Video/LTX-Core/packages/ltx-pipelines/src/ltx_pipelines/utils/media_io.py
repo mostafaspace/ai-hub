@@ -190,14 +190,17 @@ def encode_video(
     output_path: str,
     video_chunks_number: int,
 ) -> None:
+    print(f"[LTX-2] Starting video encoding... fetching first chunk.")
     if isinstance(video, torch.Tensor):
         video = iter([video])
 
     first_chunk = next(video)
-
+    print(f"[LTX-2] First video chunk received (shape: {first_chunk.shape}).")
     _, height, width, _ = first_chunk.shape
 
+    print(f"[LTX-2] Opening PyAV container for output at {output_path}...")
     container = av.open(output_path, mode="w")
+    print(f"[LTX-2] PyAV container opened.")
     stream = container.add_stream("libx264", rate=int(fps))
     stream.width = width
     stream.height = height

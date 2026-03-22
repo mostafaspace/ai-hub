@@ -62,6 +62,7 @@ class LTXModel(torch.nn.Module):
         rope_type: LTXRopeType = LTXRopeType.INTERLEAVED,
         double_precision_rope: bool = False,
         apply_gated_attention: bool = False,
+        use_single_layer_caption_projection: bool = False,
     ):
         super().__init__()
         self._enable_gradient_checkpointing = False
@@ -83,6 +84,7 @@ class LTXModel(torch.nn.Module):
                 out_channels=out_channels,
                 caption_channels=caption_channels,
                 norm_eps=norm_eps,
+                use_single_layer_projection=use_single_layer_caption_projection,
             )
 
         if model_type.is_audio_enabled():
@@ -96,6 +98,7 @@ class LTXModel(torch.nn.Module):
                 out_channels=audio_out_channels,
                 caption_channels=caption_channels,
                 norm_eps=norm_eps,
+                use_single_layer_projection=use_single_layer_caption_projection,
             )
 
         if model_type.is_video_enabled() and model_type.is_audio_enabled():
@@ -123,6 +126,7 @@ class LTXModel(torch.nn.Module):
         out_channels: int,
         caption_channels: int,
         norm_eps: float,
+        use_single_layer_projection: bool = False,
     ) -> None:
         """Initialize video-specific components."""
         # Video input components
@@ -131,10 +135,13 @@ class LTXModel(torch.nn.Module):
         self.adaln_single = AdaLayerNormSingle(self.inner_dim)
 
         # Video caption projection
-        self.caption_projection = PixArtAlphaTextProjection(
-            in_features=caption_channels,
-            hidden_size=self.inner_dim,
-        )
+        if use_single_layer_projection:
+            self.caption_projection = torch.nn.Linear(caption_channels, self.inner_dim, bias=True)
+        else:
+            self.caption_projection = PixArtAlphaTextProjection(
+                in_features=caption_channels,
+                hidden_size=self.inner_dim,
+            )
 
         # Video output components
         self.scale_shift_table = torch.nn.Parameter(torch.empty(2, self.inner_dim))
@@ -147,6 +154,7 @@ class LTXModel(torch.nn.Module):
         out_channels: int,
         caption_channels: int,
         norm_eps: float,
+        use_single_layer_projection: bool = False,
     ) -> None:
         """Initialize audio-specific components."""
 
@@ -158,10 +166,13 @@ class LTXModel(torch.nn.Module):
         )
 
         # Audio caption projection
-        self.audio_caption_projection = PixArtAlphaTextProjection(
-            in_features=caption_channels,
-            hidden_size=self.audio_inner_dim,
-        )
+        if use_single_layer_projection:
+            self.audio_caption_projection = torch.nn.Linear(caption_channels, self.audio_inner_dim, bias=True)
+        else:
+            self.audio_caption_projection = PixArtAlphaTextProjection(
+                in_features=caption_channels,
+                hidden_size=self.audio_inner_dim,
+            )
 
         # Audio output components
         self.audio_scale_shift_table = torch.nn.Parameter(torch.empty(2, self.audio_inner_dim))

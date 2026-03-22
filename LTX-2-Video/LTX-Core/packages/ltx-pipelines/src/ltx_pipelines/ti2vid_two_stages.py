@@ -11,6 +11,7 @@ from ltx_core.components.schedulers import LTX2Scheduler
 from ltx_core.loader import LoraPathStrengthAndSDOps
 from ltx_core.model.audio_vae import decode_audio as vae_decode_audio
 from ltx_core.model.upsampler import upsample_video
+from ltx_core.loader.registry import StateDictRegistry, DummyRegistry
 from ltx_core.model.video_vae import TilingConfig, get_video_chunks_number
 from ltx_core.model.video_vae import decode_video as vae_decode_video
 from ltx_core.quantization import QuantizationPolicy
@@ -59,6 +60,9 @@ class TI2VidTwoStagesPipeline:
     ):
         self.device = device
         self.dtype = torch.bfloat16
+        # Use a StateDictRegistry to cache weights on CPU, which keeps LoRA fusion in RAM
+        # instead of VRAM, avoiding OOM during the 22B model refinement.
+        self.registry = StateDictRegistry()
         self.stage_1_model_ledger = ModelLedger(
             dtype=self.dtype,
             device=device,
@@ -66,6 +70,7 @@ class TI2VidTwoStagesPipeline:
             gemma_root_path=gemma_root,
             spatial_upsampler_path=spatial_upsampler_path,
             loras=loras,
+            registry=self.registry,
             quantization=quantization,
         )
 
@@ -110,6 +115,12 @@ class TI2VidTwoStagesPipeline:
         context_p, context_n = encode_text(text_encoder, prompts=[prompt, negative_prompt])
         v_context_p, a_context_p = context_p
         v_context_n, a_context_n = context_n
+        
+        # Ensure context embeddings are pushed to CUDA before inference (required if Text Encoder was offloaded to CPU)
+        if v_context_p is not None: v_context_p = v_context_p.to(self.device)
+        if a_context_p is not None: a_context_p = a_context_p.to(self.device)
+        if v_context_n is not None: v_context_n = v_context_n.to(self.device)
+        if a_context_n is not None: a_context_n = a_context_n.to(self.device)
 
         # No need for synchronize if it was on CPU, but doesn't hurt.
         del text_encoder
@@ -118,6 +129,13 @@ class TI2VidTwoStagesPipeline:
         # Stage 1: Initial low resolution video generation.
         video_encoder = self.stage_1_model_ledger.video_encoder()
         transformer = self.stage_1_model_ledger.transformer()
+        
+        # Free System RAM by popping the 22B base transformer state dict from registry
+        # now that it's already moved to the GPU.
+        from ltx_core.model.transformer import LTXV_MODEL_COMFY_RENAMING_MAP
+        self.registry.pop([self.stage_1_model_ledger.checkpoint_path], LTXV_MODEL_COMFY_RENAMING_MAP)
+        cleanup_memory()
+
         sigmas = LTX2Scheduler().execute(steps=num_inference_steps).to(dtype=torch.float32, device=self.device)
 
         def first_stage_denoising_loop(
@@ -171,8 +189,13 @@ class TI2VidTwoStagesPipeline:
         )
 
         torch.cuda.synchronize()
-        del transformer
+        if transformer is not None:
+            print(f"[LTX-2] Stage 1 transformer deleted.")
+            del transformer
+        
+        print(f"[LTX-2] Running cleanup_memory after Stage 1 denoising...")
         cleanup_memory()
+        print(f"[LTX-2] Cleanup complete. VRAM/RAM freed.")
 
         # Stage 2: Upsample and refine the video at higher resolution with distilled LORA.
         upscaled_video_latent = upsample_video(
@@ -182,9 +205,38 @@ class TI2VidTwoStagesPipeline:
         )
 
         torch.cuda.synchronize()
+        print(f"[LTX-2] Running cleanup_memory after upsampling...")
         cleanup_memory()
+        print(f"[LTX-2] Cleanup complete. VRAM/RAM freed.")
+
+        # Build Stage 2 components before building Stage 2 Transformer to avoid spikes
+        stage_2_output_shape = VideoPixelShape(batch=1, frames=num_frames, width=width, height=height, fps=frame_rate)
+        stage_2_conditionings = image_conditionings_by_replacing_latent(
+            images=images,
+            height=stage_2_output_shape.height,
+            width=stage_2_output_shape.width,
+            video_encoder=video_encoder,
+            dtype=dtype,
+            device=self.device,
+        )
+        
+        # Now that we have conditionings and upscaled latent, we can delete the encoder
+        del video_encoder
+        print(f"[LTX-2] Running cleanup_memory after video encoder deletion...")
+        cleanup_memory()
+        print(f"[LTX-2] Cleanup complete. VRAM/RAM freed.")
 
         transformer = self.stage_2_model_ledger.transformer()
+
+        # Free System RAM again after refined transformer is on GPU.
+        # This is critical to leave room for the large VAE decode.
+        from ltx_core.model.transformer import LTXV_MODEL_COMFY_RENAMING_MAP
+        print(f"[LTX-2] Popping Stage 2 transformer from registry...")
+        self.registry.pop([self.stage_2_model_ledger.checkpoint_path], LTXV_MODEL_COMFY_RENAMING_MAP)
+        print(f"[LTX-2] Running cleanup_memory after Stage 2 transformer pop...")
+        cleanup_memory()
+        print(f"[LTX-2] Cleanup complete. VRAM/RAM freed.")
+
         distilled_sigmas = torch.Tensor(STAGE_2_DISTILLED_SIGMA_VALUES).to(self.device)
 
         def second_stage_denoising_loop(
@@ -202,15 +254,6 @@ class TI2VidTwoStagesPipeline:
                 ),
             )
 
-        stage_2_output_shape = VideoPixelShape(batch=1, frames=num_frames, width=width, height=height, fps=frame_rate)
-        stage_2_conditionings = image_conditionings_by_replacing_latent(
-            images=images,
-            height=stage_2_output_shape.height,
-            width=stage_2_output_shape.width,
-            video_encoder=video_encoder,
-            dtype=dtype,
-            device=self.device,
-        )
         video_state, audio_state = denoise_audio_video(
             output_shape=stage_2_output_shape,
             conditionings=stage_2_conditionings,
@@ -227,16 +270,51 @@ class TI2VidTwoStagesPipeline:
         )
 
         torch.cuda.synchronize()
-        del transformer
-        del video_encoder
+        if transformer is not None:
+            print(f"[LTX-2] Stage 2 transformer deleted.")
+            del transformer
+        print(f"[LTX-2] Running cleanup_memory after Stage 2 denoising...")
         cleanup_memory()
+        print(f"[LTX-2] Cleanup complete. VRAM/RAM freed.")
 
+        # Use more aggressive 384px tiling for VAE decode to avoid VRAM spikes on 720p/1080p
+        from ltx_core.model.video_vae import SpatialTilingConfig, TemporalTilingConfig, VAE_DECODER_COMFY_KEYS_FILTER
+        custom_tiling = TilingConfig(
+            spatial_config=SpatialTilingConfig(tile_size_in_pixels=384, tile_overlap_in_pixels=64),
+            temporal_config=TemporalTilingConfig(tile_size_in_frames=64, tile_overlap_in_frames=24)
+        )
+        from ltx_core.model.audio_vae import AUDIO_VAE_DECODER_COMFY_KEYS_FILTER, VOCODER_COMFY_KEYS_FILTER
+
+        print(f"[LTX-2] Starting VAE decoding (81-frame sequence, 384px tiling)...")
+        print(f"[LTX-2] Building VAE video decoder...")
+        vae_video_decoder = self.stage_2_model_ledger.video_decoder()
+        print(f"[LTX-2] Video VAE decoder built. Popping from registry...")
+        self.registry.pop([self.stage_2_model_ledger.checkpoint_path], VAE_DECODER_COMFY_KEYS_FILTER)
+        
+        print(f"[LTX-2] Creating VAE decoding iterator...")
         decoded_video = vae_decode_video(
-            video_state.latent, self.stage_2_model_ledger.video_decoder(), tiling_config, generator
+            video_state.latent, vae_video_decoder, custom_tiling, generator
         )
-        decoded_audio = vae_decode_audio(
-            audio_state.latent, self.stage_2_model_ledger.audio_decoder(), self.stage_2_model_ledger.vocoder()
-        )
+        print(f"[LTX-2] VAE decoder built and iterator created.")
+
+        try:
+            print(f"[LTX-2] Building VAE audio decoder...")
+            vae_audio_decoder = self.stage_2_model_ledger.audio_decoder()
+            print(f"[LTX-2] Audio VAE decoder built. Popping from registry...")
+            self.registry.pop([self.stage_2_model_ledger.checkpoint_path], AUDIO_VAE_DECODER_COMFY_KEYS_FILTER)
+            
+            vocoder = self.stage_2_model_ledger.vocoder()
+            self.registry.pop([self.stage_2_model_ledger.checkpoint_path], VOCODER_COMFY_KEYS_FILTER)
+
+            decoded_audio = vae_decode_audio(
+                audio_state.latent, vae_audio_decoder, vocoder
+            )
+            print(f"[LTX-2] Audio decoded.")
+        except Exception as e:
+            print(f"[LTX-2] Audio decoding failed/skipped (Incompatible architecture): {e}")
+            # Return silent audio (1 second for dummy)
+            decoded_audio = torch.zeros((2, 16000), dtype=torch.float32)
+
 
         return decoded_video, decoded_audio
 

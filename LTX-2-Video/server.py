@@ -1,4 +1,5 @@
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import io
 import time
 import torch
@@ -15,10 +16,9 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
 
 import sys
-import torch
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "LTX-Core", "packages", "ltx-core", "src")))
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "LTX-Core", "packages", "ltx-pipelines", "src")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "LTX-Core", "packages", "ltx-core", "src")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "LTX-Core", "packages", "ltx-pipelines", "src")))
 
 # HOTFIX: The unquantized Gemma-3 model requires 'rope_local_base_freq'
 try:
@@ -35,17 +35,17 @@ except ImportError:
     pass
 except Exception as e:
     print(f"[LTX-2] Warning: Could not patch Gemma3TextConfig: {e}")
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "LTX-Core", "packages", "ltx-pipelines", "src")))
 
 # We'll need ltx_pipelines, assuming we run this from a script that sets PYTHONPATH
+import ltx_core.model.transformer.model_configurator as mc
+print(f"[LTX-2] DEBUG: Loading model_configurator from: {mc.__file__}")
+
 from ltx_pipelines.ti2vid_two_stages import TI2VidTwoStagesPipeline
 from ltx_core.components.guiders import MultiModalGuiderParams
 from ltx_core.loader import LTXV_LORA_COMFY_RENAMING_MAP, LoraPathStrengthAndSDOps
 from ltx_core.quantization import QuantizationPolicy
 from ltx_pipelines.utils.constants import DEFAULT_NEGATIVE_PROMPT
 
-import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import config
 
 HOST = config.HOST
@@ -53,6 +53,7 @@ PORT = config.VIDEO_PORT
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "generated_videos")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
 
 logger = logging.getLogger("LTX-2")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -62,7 +63,19 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 LTX_MODEL_PATH = getattr(config, "VIDEO_MODEL_BASE", os.path.join(config.HF_HOME, "Lightricks/LTX-2.3/ltx-2.3-22b-dev-fp8.safetensors"))
 GEMMA_ROOT = getattr(config, "VIDEO_GEMMA_ROOT", os.path.join(config.HF_HOME, "google/gemma-3-12b-it-qat-q4_0-unquantized"))
 DISTILLED_LORA = getattr(config, "VIDEO_DISTILLED_LORA", os.path.join(config.HF_HOME, "Lightricks/LTX-2.3/ltx-2.3-22b-distilled-lora-384.safetensors"))
+DISTILLED_LORA_STRENGTH = getattr(config, "VIDEO_DISTILLED_LORA_STRENGTH", 0.6)
 SPATIAL_UPSAMPLER = getattr(config, "VIDEO_SPATIAL_UPSAMPLER", os.path.join(config.HF_HOME, "Lightricks/LTX-2.3/ltx-2.3-spatial-upscaler-x2-1.1.safetensors"))
+
+# Quality-biased defaults based on the official LTX-2 guidance and the linked
+# Kaggle notebook: prompt enhancement on, 24 fps, and more stage-1 denoising.
+DEFAULT_FRAME_RATE = 24.0
+DEFAULT_NUM_INFERENCE_STEPS = 20
+DEFAULT_VIDEO_CFG_SCALE = 3.0
+DEFAULT_VIDEO_STG_SCALE = 1.0
+DEFAULT_AUDIO_CFG_SCALE = 7.0
+DEFAULT_MODALITY_SCALE = 3.0
+DEFAULT_RESCALE_SCALE = 0.7
+DEFAULT_STG_BLOCKS = [29]
 
 
 # --- Model Management (Auto-Unload via Thread RLock) ---
@@ -117,7 +130,13 @@ class ModelManager:
             distilled_lora_config = None
             if os.path.exists(DISTILLED_LORA):
                 distilled_lora_config = [
-                    LoraPathStrengthAndSDOps(DISTILLED_LORA, 1.0, LTXV_LORA_COMFY_RENAMING_MAP)
+                    # The official two-stage examples use a milder 0.6 distilled
+                    # LoRA strength for cleaner refinement with the full model.
+                    LoraPathStrengthAndSDOps(
+                        DISTILLED_LORA,
+                        DISTILLED_LORA_STRENGTH,
+                        LTXV_LORA_COMFY_RENAMING_MAP,
+                    )
                 ]
             else:
                 print(f"[LTX-2] WARNING: Distilled LORA not found at {DISTILLED_LORA}. Will attempt to run without it, but Quality will drop.")
@@ -160,15 +179,97 @@ class VideoGenerationRequest(BaseModel):
     height: int = Field(default=512, description="Base height before upsampling")
     width: int = Field(default=768, description="Base width before upsampling")
     num_frames: int = Field(default=121, description="Number of frames")
-    frame_rate: float = Field(default=25.0, description="FPS for the mp4 file")
-    num_inference_steps: int = Field(default=11, description="Denoising steps (11 for 8+3 Distilled)")
+    frame_rate: float = Field(default=DEFAULT_FRAME_RATE, description="FPS for the mp4 file")
+    num_inference_steps: int = Field(
+        default=DEFAULT_NUM_INFERENCE_STEPS,
+        description="Stage-1 denoising steps. Higher values improve quality at the cost of speed.",
+    )
     seed: int = Field(default=42, description="Random seed")
+    negative_prompt: str = Field(
+        default=DEFAULT_NEGATIVE_PROMPT,
+        description="Prompt describing artifacts or unwanted traits to avoid.",
+    )
+    enhance_prompt: bool = Field(
+        default=True,
+        description="Use Gemma prompt enhancement before generation for better scene detail and motion planning.",
+    )
     
     # Advanced Optional Guider params mapped
-    cfg_scale_video: float = 3.5
-    stg_scale_video: float = 1.2
-    cfg_scale_audio: float = 7.0
-    modality_scale: float = 3.0
+    cfg_scale_video: float = DEFAULT_VIDEO_CFG_SCALE
+    stg_scale_video: float = DEFAULT_VIDEO_STG_SCALE
+    cfg_scale_audio: float = DEFAULT_AUDIO_CFG_SCALE
+    modality_scale: float = DEFAULT_MODALITY_SCALE
+
+
+def _build_guiders(
+    cfg_scale_video: float,
+    stg_scale_video: float,
+    cfg_scale_audio: float,
+    modality_scale: float,
+) -> tuple[MultiModalGuiderParams, MultiModalGuiderParams]:
+    video_guider = MultiModalGuiderParams(
+        cfg_scale=cfg_scale_video,
+        stg_scale=stg_scale_video,
+        rescale_scale=DEFAULT_RESCALE_SCALE,
+        modality_scale=modality_scale,
+        skip_step=0,
+        stg_blocks=DEFAULT_STG_BLOCKS,
+    )
+    audio_guider = MultiModalGuiderParams(
+        cfg_scale=cfg_scale_audio,
+        stg_scale=stg_scale_video,
+        rescale_scale=DEFAULT_RESCALE_SCALE,
+        modality_scale=modality_scale,
+        skip_step=0,
+        stg_blocks=DEFAULT_STG_BLOCKS,
+    )
+    return video_guider, audio_guider
+
+
+def _warn_if_quality_risky(height: int, width: int, num_frames: int, frame_rate: float) -> None:
+    stage_1_height = height // 2
+    stage_1_width = width // 2
+    if min(stage_1_height, stage_1_width) < 256:
+        logger.warning(
+            "[LTX-2] Low base resolution detected (%sx%s -> stage 1 %sx%s). "
+            "This can increase artifacts in two-stage generation.",
+            width,
+            height,
+            stage_1_width,
+            stage_1_height,
+        )
+    if num_frames > 241:
+        logger.info(
+            "[LTX-2] Long generation requested (%s frames at %.1f fps). "
+            "Shorter clips usually produce cleaner motion and fewer artifacts.",
+            num_frames,
+            frame_rate,
+        )
+
+
+def _encode_video_file(video, audio, num_frames: int, frame_rate: float, output_path: str) -> None:
+    from ltx_pipelines.utils.media_io import encode_video
+    from ltx_pipelines.utils.constants import AUDIO_SAMPLE_RATE
+    from ltx_core.model.video_vae import (
+        TilingConfig,
+        get_video_chunks_number,
+        SpatialTilingConfig,
+        TemporalTilingConfig,
+    )
+
+    tiling_config = TilingConfig(
+        spatial_config=SpatialTilingConfig(tile_size_in_pixels=384, tile_overlap_in_pixels=64),
+        temporal_config=TemporalTilingConfig(tile_size_in_frames=64, tile_overlap_in_frames=24),
+    )
+    video_chunks_number = get_video_chunks_number(num_frames, tiling_config)
+    encode_video(
+        video=video,
+        fps=frame_rate,
+        audio=audio,
+        audio_sample_rate=AUDIO_SAMPLE_RATE,
+        output_path=output_path,
+        video_chunks_number=video_chunks_number,
+    )
 
 
 # --- Endpoints ---
@@ -210,23 +311,9 @@ def get_task_status(task_id: str):
 
 def _encode_and_save_video(video, audio, num_frames, frame_rate, task_id: str):
     """Encode video/audio tensors to an MP4 file in OUTPUT_DIR. Returns the URL."""
-    from ltx_pipelines.utils.media_io import encode_video
-    from ltx_pipelines.utils.constants import AUDIO_SAMPLE_RATE
-    from ltx_core.model.video_vae import TilingConfig, get_video_chunks_number
-
-    tiling_config = TilingConfig.default()
-    video_chunks_number = get_video_chunks_number(num_frames, tiling_config)
-
     filename = f"ltx2_{task_id}.mp4"
     output_path = os.path.join(OUTPUT_DIR, filename)
-    encode_video(
-        video=video,
-        fps=frame_rate,
-        audio=audio,
-        audio_sample_rate=AUDIO_SAMPLE_RATE,
-        output_path=output_path,
-        video_chunks_number=video_chunks_number,
-    )
+    _encode_video_file(video, audio, num_frames, frame_rate, output_path)
     url = f"http://{config.PUBLIC_HOST}:{PORT}/outputs/{filename}"
     return url
 
@@ -234,32 +321,31 @@ def _encode_and_save_video(video, audio, num_frames, frame_rate, task_id: str):
 def _process_async_t2v(task_id: str, prompt: str, height: int, width: int,
                        num_frames: int, frame_rate: float, num_inference_steps: int,
                        seed: int, cfg_scale_video: float, stg_scale_video: float,
-                       cfg_scale_audio: float, modality_scale: float):
+                       cfg_scale_audio: float, modality_scale: float,
+                       negative_prompt: str, enhance_prompt: bool):
     """Background worker for async T2V generation."""
     global is_generating
     with generation_lock:
         is_generating = True
         try:
             pipeline = manager.get_pipeline()
-            video_guider = MultiModalGuiderParams(
-                cfg_scale=cfg_scale_video, stg_scale=stg_scale_video,
-                rescale_scale=0.7, modality_scale=modality_scale,
-                skip_step=0, stg_blocks=[29],
-            )
-            audio_guider = MultiModalGuiderParams(
-                cfg_scale=cfg_scale_audio, stg_scale=stg_scale_video,
-                rescale_scale=0.7, modality_scale=modality_scale,
-                skip_step=0, stg_blocks=[29],
+            _warn_if_quality_risky(height, width, num_frames, frame_rate)
+            video_guider, audio_guider = _build_guiders(
+                cfg_scale_video=cfg_scale_video,
+                stg_scale_video=stg_scale_video,
+                cfg_scale_audio=cfg_scale_audio,
+                modality_scale=modality_scale,
             )
             logger.info(f"[Task {task_id}] T2V generating: '{prompt[:50]}...'")
             with torch.inference_mode():
                 video, audio = pipeline(
-                    prompt=prompt, negative_prompt=DEFAULT_NEGATIVE_PROMPT,
+                    prompt=prompt, negative_prompt=negative_prompt,
                     seed=seed, height=height, width=width,
                     num_frames=num_frames, frame_rate=frame_rate,
                     num_inference_steps=num_inference_steps,
                     video_guider_params=video_guider, audio_guider_params=audio_guider,
-                    images=[]
+                    images=[],
+                    enhance_prompt=enhance_prompt,
                 )
             
                 url = _encode_and_save_video(video, audio, num_frames, frame_rate, task_id)
@@ -277,33 +363,32 @@ def _process_async_t2v(task_id: str, prompt: str, height: int, width: int,
 def _process_async_i2v(task_id: str, image_path: str, prompt: str,
                        height: int, width: int, num_frames: int, frame_rate: float,
                        num_inference_steps: int, seed: int,
-                       cfg_scale_video: float, stg_scale_video: float):
+                       cfg_scale_video: float, stg_scale_video: float,
+                       negative_prompt: str, enhance_prompt: bool):
     """Background worker for async I2V generation."""
     global is_generating
     with generation_lock:
         is_generating = True
         try:
             pipeline = manager.get_pipeline()
-            video_guider = MultiModalGuiderParams(
-                cfg_scale=cfg_scale_video, stg_scale=stg_scale_video,
-                rescale_scale=0.7, modality_scale=3.0,
-                skip_step=0, stg_blocks=[29],
-            )
-            audio_guider = MultiModalGuiderParams(
-                cfg_scale=7.0, stg_scale=stg_scale_video,
-                rescale_scale=0.7, modality_scale=3.0,
-                skip_step=0, stg_blocks=[29],
+            _warn_if_quality_risky(height, width, num_frames, frame_rate)
+            video_guider, audio_guider = _build_guiders(
+                cfg_scale_video=cfg_scale_video,
+                stg_scale_video=stg_scale_video,
+                cfg_scale_audio=DEFAULT_AUDIO_CFG_SCALE,
+                modality_scale=DEFAULT_MODALITY_SCALE,
             )
             image_conditions = [(image_path, 0, 1.0)]
             logger.info(f"[Task {task_id}] I2V generating: '{prompt[:50]}...'")
             with torch.inference_mode():
                 video, audio = pipeline(
-                    prompt=prompt, negative_prompt=DEFAULT_NEGATIVE_PROMPT,
+                    prompt=prompt, negative_prompt=negative_prompt,
                     seed=seed, height=height, width=width,
                     num_frames=num_frames, frame_rate=frame_rate,
                     num_inference_steps=num_inference_steps,
                     video_guider_params=video_guider, audio_guider_params=audio_guider,
-                    images=image_conditions
+                    images=image_conditions,
+                    enhance_prompt=enhance_prompt,
                 )
             
                 url = _encode_and_save_video(video, audio, num_frames, frame_rate, task_id)
@@ -321,6 +406,8 @@ def _process_async_i2v(task_id: str, image_path: str, prompt: str,
                     os.remove(image_path)
             except:
                 pass
+            gc.collect()
+            torch.cuda.empty_cache()
 
 
 @app.post("/v1/video/async_t2v")
@@ -332,7 +419,8 @@ def async_t2v(req: VideoGenerationRequest):
         target=_process_async_t2v, daemon=True,
         args=(task_id, req.prompt, req.height, req.width,
               req.num_frames, req.frame_rate, req.num_inference_steps, req.seed,
-              req.cfg_scale_video, req.stg_scale_video, req.cfg_scale_audio, req.modality_scale)
+              req.cfg_scale_video, req.stg_scale_video, req.cfg_scale_audio, req.modality_scale,
+              req.negative_prompt, req.enhance_prompt)
     )
     t.start()
     return {"task_id": task_id, "status": "processing", "message": "Task queued. Poll GET /v1/video/tasks/{task_id}"}
@@ -345,11 +433,13 @@ async def async_i2v(
     height: int = Form(512),
     width: int = Form(768),
     num_frames: int = Form(121),
-    frame_rate: float = Form(25.0),
-    num_inference_steps: int = Form(11),
+    frame_rate: float = Form(DEFAULT_FRAME_RATE),
+    num_inference_steps: int = Form(DEFAULT_NUM_INFERENCE_STEPS),
     seed: int = Form(42),
-    cfg_scale_video: float = Form(3.5),
-    stg_scale_video: float = Form(1.2)
+    cfg_scale_video: float = Form(DEFAULT_VIDEO_CFG_SCALE),
+    stg_scale_video: float = Form(DEFAULT_VIDEO_STG_SCALE),
+    negative_prompt: str = Form(DEFAULT_NEGATIVE_PROMPT),
+    enhance_prompt: bool = Form(True),
 ):
     """Submit an I2V job. Returns immediately with a task_id. Poll GET /v1/video/tasks/{task_id}."""
     import tempfile
@@ -366,7 +456,7 @@ async def async_i2v(
         target=_process_async_i2v, daemon=True,
         args=(task_id, temp_in_path, prompt,
               height, width, num_frames, frame_rate, num_inference_steps, seed,
-              cfg_scale_video, stg_scale_video)
+              cfg_scale_video, stg_scale_video, negative_prompt, enhance_prompt)
     )
     t.start()
     return {"task_id": task_id, "status": "processing", "message": "Task queued. Poll GET /v1/video/tasks/{task_id}"}
@@ -387,23 +477,12 @@ def generate_t2v(req: VideoGenerationRequest):
     with manager.lock:
         try:
             pipeline = manager.get_pipeline()
-            
-            video_guider = MultiModalGuiderParams(
-                cfg_scale=req.cfg_scale_video,
-                stg_scale=req.stg_scale_video,
-                rescale_scale=0.7,
+            _warn_if_quality_risky(req.height, req.width, req.num_frames, req.frame_rate)
+            video_guider, audio_guider = _build_guiders(
+                cfg_scale_video=req.cfg_scale_video,
+                stg_scale_video=req.stg_scale_video,
+                cfg_scale_audio=req.cfg_scale_audio,
                 modality_scale=req.modality_scale,
-                skip_step=0,
-                stg_blocks=[29],
-            )
-
-            audio_guider = MultiModalGuiderParams(
-                cfg_scale=req.cfg_scale_audio,
-                stg_scale=req.stg_scale_video, # Usually matches
-                rescale_scale=0.7,
-                modality_scale=req.modality_scale,
-                skip_step=0,
-                stg_blocks=[29],
             )
 
             print(f"[LTX-2] Starting Generation (seed={req.seed}): {req.prompt[:50]}...")
@@ -417,7 +496,7 @@ def generate_t2v(req: VideoGenerationRequest):
             with torch.inference_mode():
                 video, audio = pipeline(
                     prompt=req.prompt,
-                    negative_prompt=DEFAULT_NEGATIVE_PROMPT,
+                    negative_prompt=req.negative_prompt,
                     seed=req.seed,
                     height=req.height,
                     width=req.width,
@@ -426,24 +505,10 @@ def generate_t2v(req: VideoGenerationRequest):
                     num_inference_steps=req.num_inference_steps,
                     video_guider_params=video_guider,
                     audio_guider_params=audio_guider,
-                    images=[]
+                    images=[],
+                    enhance_prompt=req.enhance_prompt,
                 )
-                
-                from ltx_pipelines.utils.media_io import encode_video
-                from ltx_pipelines.utils.constants import AUDIO_SAMPLE_RATE
-                from ltx_core.model.video_vae import TilingConfig, get_video_chunks_number
-    
-                tiling_config = TilingConfig.default()
-                video_chunks_number = get_video_chunks_number(req.num_frames, tiling_config)
-    
-                encode_video(
-                    video=video,
-                    fps=req.frame_rate,
-                    audio=audio,
-                    audio_sample_rate=AUDIO_SAMPLE_RATE,
-                    output_path=temp_out.name,
-                    video_chunks_number=video_chunks_number,
-                )
+                _encode_video_file(video, audio, req.num_frames, req.frame_rate, temp_out.name)
             
             # Stream the file back and cleanup
             def iterfile():
@@ -470,11 +535,13 @@ async def generate_i2v(
     height: int = Form(512),
     width: int = Form(768),
     num_frames: int = Form(121),
-    frame_rate: float = Form(25.0),
-    num_inference_steps: int = Form(11),
+    frame_rate: float = Form(DEFAULT_FRAME_RATE),
+    num_inference_steps: int = Form(DEFAULT_NUM_INFERENCE_STEPS),
     seed: int = Form(42),
-    cfg_scale_video: float = Form(3.5),
-    stg_scale_video: float = Form(1.2)
+    cfg_scale_video: float = Form(DEFAULT_VIDEO_CFG_SCALE),
+    stg_scale_video: float = Form(DEFAULT_VIDEO_STG_SCALE),
+    negative_prompt: str = Form(DEFAULT_NEGATIVE_PROMPT),
+    enhance_prompt: bool = Form(True),
 ):
     """Image to Video Generation."""
     
@@ -490,22 +557,12 @@ async def generate_i2v(
     with manager.lock:
         try:
             pipeline = manager.get_pipeline()
-            
-            video_guider = MultiModalGuiderParams(
-                cfg_scale=cfg_scale_video,
-                stg_scale=stg_scale_video,
-                rescale_scale=0.7,
-                modality_scale=3.0,
-                skip_step=0,
-                stg_blocks=[29],
-            )
-            audio_guider = MultiModalGuiderParams(
-                cfg_scale=7.0,
-                stg_scale=stg_scale_video,
-                rescale_scale=0.7,
-                modality_scale=3.0,
-                skip_step=0,
-                stg_blocks=[29],
+            _warn_if_quality_risky(height, width, num_frames, frame_rate)
+            video_guider, audio_guider = _build_guiders(
+                cfg_scale_video=cfg_scale_video,
+                stg_scale_video=stg_scale_video,
+                cfg_scale_audio=DEFAULT_AUDIO_CFG_SCALE,
+                modality_scale=DEFAULT_MODALITY_SCALE,
             )
 
             temp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4", prefix="ltx2_out_")
@@ -519,7 +576,7 @@ async def generate_i2v(
             with torch.inference_mode():
                 video, audio = pipeline(
                     prompt=prompt,
-                    negative_prompt=DEFAULT_NEGATIVE_PROMPT,
+                    negative_prompt=negative_prompt,
                     seed=seed,
                     height=height,
                     width=width,
@@ -528,24 +585,10 @@ async def generate_i2v(
                     num_inference_steps=num_inference_steps,
                     video_guider_params=video_guider,
                     audio_guider_params=audio_guider,
-                    images=image_conditions
+                    images=image_conditions,
+                    enhance_prompt=enhance_prompt,
                 )
-    
-                from ltx_pipelines.utils.media_io import encode_video
-                from ltx_pipelines.utils.constants import AUDIO_SAMPLE_RATE
-                from ltx_core.model.video_vae import TilingConfig, get_video_chunks_number
-    
-                tiling_config = TilingConfig.default()
-                video_chunks_number = get_video_chunks_number(num_frames, tiling_config)
-    
-                encode_video(
-                    video=video,
-                    fps=frame_rate,
-                    audio=audio,
-                    audio_sample_rate=AUDIO_SAMPLE_RATE,
-                    output_path=temp_out.name,
-                    video_chunks_number=video_chunks_number,
-                )
+                _encode_video_file(video, audio, num_frames, frame_rate, temp_out.name)
 
             # Cleanup input image immediately
             if os.path.exists(temp_in_path):

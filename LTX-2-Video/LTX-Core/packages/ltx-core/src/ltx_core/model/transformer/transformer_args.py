@@ -78,7 +78,11 @@ class TransformerArgsPreprocessor:
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Prepare context for transformer blocks."""
         batch_size = x.shape[0]
-        context = self.caption_projection(context)
+        # LTX-2.3 checkpoints can already feed connector-projected context into the
+        # transformer path. In that case, applying caption_projection again turns a
+        # valid [B, T, inner_dim] tensor into a shape mismatch at inference time.
+        if context.shape[-1] != x.shape[-1]:
+            context = self.caption_projection(context)
         context = context.view(batch_size, -1, x.shape[-1])
 
         return context, attention_mask

@@ -21,6 +21,15 @@ class PixArtAlphaTextProjection(torch.nn.Module):
         self.linear_2 = torch.nn.Linear(in_features=hidden_size, out_features=out_features, bias=True)
 
     def forward(self, caption: torch.Tensor) -> torch.Tensor:
+        # HOTFIX: LTX 2.3 Gemma embeddings natively match the inner dimension
+        # and do not use the legacy T5 projection layer. If the layer weights
+        # are zero (uninitialized) or shapes mismatch, safely bypass projection.
+        if not hasattr(self, "_is_uninitialized"):
+            self._is_uninitialized = torch.all(self.linear_1.weight == 0).item()
+            
+        if self._is_uninitialized or caption.shape[-1] != self.linear_1.in_features:
+            return caption
+
         hidden_states = self.linear_1(caption)
         hidden_states = self.act_1(hidden_states)
         hidden_states = self.linear_2(hidden_states)

@@ -10,7 +10,9 @@ from ltx_core.model.model_protocol import ModelConfigurator
 class VocoderConfigurator(ModelConfigurator[Vocoder]):
     @classmethod
     def from_config(cls: type[Vocoder], config: dict) -> Vocoder:
-        config = config.get("vocoder", {})
+        vocoder_cfg = config.get("vocoder", {})
+        # Handle nested config if present (standard for LTX-2.3)
+        config = vocoder_cfg.get("vocoder", vocoder_cfg)
         return Vocoder(
             resblock_kernel_sizes=config.get("resblock_kernel_sizes", [3, 7, 11]),
             upsample_rates=config.get("upsample_rates", [6, 5, 2, 2, 2]),

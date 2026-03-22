@@ -73,10 +73,12 @@ class SingleGPUModelBuilder(Generic[ModelType], ModelBuilderProtocol[ModelType],
             for module in meta_model.modules():
                 for param_name, param in module.named_parameters(recurse=False):
                     if str(param.device) == "meta":
-                        param.data = torch.zeros_like(param, device=device)
+                        new_param = torch.nn.Parameter(torch.zeros(*param.shape, dtype=param.dtype, device=device), requires_grad=param.requires_grad)
+                        module.register_parameter(param_name, new_param)
                 for buf_name, buf in module.named_buffers(recurse=False):
                     if buf is not None and str(buf.device) == "meta":
-                        module.register_buffer(buf_name, torch.zeros_like(buf, device=device))
+                        new_buf = torch.zeros(*buf.shape, dtype=buf.dtype, device=device)
+                        module.register_buffer(buf_name, new_buf)
         retval = meta_model.to(device)
         return retval
 
@@ -92,7 +94,9 @@ class SingleGPUModelBuilder(Generic[ModelType], ModelBuilderProtocol[ModelType],
             raw_sd = model_state_dict.sd
             sd = raw_sd
             if dtype is not None:
-                sd = {key: value.to(dtype=dtype) for key, value in raw_sd.items()}
+                sd = {key: value.to(device=device, dtype=dtype) for key, value in raw_sd.items()}
+            else:
+                sd = {key: value.to(device=device) for key, value in raw_sd.items()}
             meta_model.load_state_dict(sd, strict=False, assign=True)
             # HOTFIX: Register FP8 weight_scale buffers on Linear layers immediately after loading.
             # load_state_dict silently drops weight_scale keys (nn.Linear has no param for them).
@@ -115,7 +119,8 @@ class SingleGPUModelBuilder(Generic[ModelType], ModelBuilderProtocol[ModelType],
             dtype=dtype,
             destination_sd=model_state_dict if isinstance(self.registry, DummyRegistry) else None,
         )
-        meta_model.load_state_dict(final_sd.sd, strict=False, assign=True)
+        final_sd_dict = {key: value.to(device=device) for key, value in final_sd.sd.items()}
+        meta_model.load_state_dict(final_sd_dict, strict=False, assign=True)
         # HOTFIX: Register FP8 weight_scale buffers after loading the merged (base+LoRA) state dict.
         if _inject_fp8_scales is not None:
             _inject_fp8_scales(meta_model, final_sd.sd)
