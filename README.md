@@ -47,8 +47,8 @@ High-fidelity photorealistic and bilingual image generation powered by the Tongy
 ### 🎬 LTX-2 Video
 High-fidelity, synchronized audio and video generation powered by Lightricks' DiT-based foundation model.
 - **Path**: [`/LTX-2-Video`](./LTX-2-Video)
-- **Primary Endpoint**: `http://<device-ip>:8004/v1/video/t2v`
-- **Features**: Text-to-Video, Image-to-Video generation, multimodality sync, automatic VRAM unloading.
+- **Primary Endpoint**: `http://<device-ip>:8004/v1/video/async_t2v`
+- **Features**: Async-first Text-to-Video and Image-to-Video generation, automatic VRAM unloading, task polling with downloadable outputs, and reference-image I2V workflows tuned for cleaner local quality.
 
 ---
 
@@ -62,7 +62,7 @@ AI-Hub runs powerful generative models locally. Below are the estimated VRAM req
 | **ACE-Step Music** | 1.5 Turbo (DiT + 1.7B LM) | float16 | ~8-12 GB* |
 | **Qwen3 ASR** | Qwen2-Audio-7B | float16 | ~16-18 GB |
 | **Vision (Z-Image)** | 6B DiT | bfloat16 | ~16 GB** |
-| **LTX-2 Video** | 19B DiT (FP8) | fp8 | ~16-24 GB |
+| **LTX-2 Video** | 22B DiT (FP8) | fp8 | ~24-32 GB |
 
 > [!NOTE]
 > **ACE-Step Music** scales with available VRAM. It can run in "DiT-only" mode on as little as **4GB VRAM**, or use larger Language Models (up to 4B) if 16GB+ is available.

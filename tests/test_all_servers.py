@@ -2,7 +2,7 @@
 """
 Antigravity AI - Unified Server Test Script
 
-Tests Qwen3 TTS, ACE-Step Music, and Qwen3 ASR servers to verify they're working.
+Tests TTS, music, ASR, vision, and video servers to verify they're working.
 
 Usage:
     python test_all_servers.py
@@ -67,6 +67,33 @@ def create_dummy_wav(filename="test_audio.wav"):
     return filename
 
 
+def create_dummy_png(filename="test_frame.png"):
+    """Create a simple bright test image for image-to-video verification."""
+    if os.path.exists(filename):
+        return filename
+
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (640, 384), (90, 180, 255))
+    draw = ImageDraw.Draw(image)
+    draw.ellipse((450, 30, 540, 120), fill=(255, 245, 190))
+    draw.polygon([(0, 320), (140, 170), (260, 320)], fill=(70, 90, 150))
+    draw.polygon([(180, 320), (340, 130), (500, 320)], fill=(90, 110, 170))
+    draw.polygon([(390, 320), (540, 180), (640, 320)], fill=(65, 85, 145))
+    draw.rectangle((0, 320, 640, 384), fill=(245, 245, 250))
+    image.save(filename, format="PNG")
+    return filename
+
+
+def unload_service(port):
+    """Best-effort unload to free VRAM/RAM between service tests."""
+    try:
+        requests.post(f"http://{DEVICE_IP}:{port}/v1/internal/unload", timeout=20)
+        time.sleep(3)
+    except Exception:
+        pass
+
+
 def test_tts_server():
     """Test the TTS server with a simple request."""
     print(f"\n[TEST] Testing Qwen3 TTS Server at {DEVICE_IP}...")
@@ -86,6 +113,7 @@ def test_tts_server():
             with open(filename, "wb") as f:
                 f.write(response.content)
             print(f"  [SAVED] Audio saved to: {filename} ({len(response.content)} bytes)")
+            unload_service(config.TTS_PORT)
             return True
         else:
             print(f"  [ERROR] TTS failed: {response.status_code}")
@@ -118,6 +146,7 @@ def test_acestep_server():
             
             if task_id:
                 print(f"  [OK] Task created: {task_id}")
+                unload_service(config.MUSIC_PORT)
                 return True # Assuming queue works, just checking submission for speed
         
         print(f"  [ERROR] ACE-Step submission failed: {response.text}")
@@ -147,6 +176,7 @@ def test_asr_server():
         if response.status_code == 200:
             result = response.json()
             print(f"  [OK] ASR successful! Output: {result.get('text', 'No text returned')}")
+            unload_service(config.ASR_PORT)
             return True
         else:
              print(f"  [ERROR] ASR failed: {response.status_code} - {response.text}")
@@ -180,6 +210,7 @@ def test_vision_server():
                 item = data["data"][0]
                 if "url" in item:
                     print(f"  Image URL: {item['url']}")
+            unload_service(config.VISION_PORT)
             return True
         else:
             print(f"  [ERROR] Vision failed: {response.status_code}")
@@ -190,32 +221,95 @@ def test_vision_server():
 
 
 def test_video_server():
-    """Test the LTX-2 Video service with a quick t2v request."""
+    """Test the LTX-2 Video service through the required async i2v polling flow."""
     print(f"\n[TEST] Testing LTX-2 Video Server at {DEVICE_IP}...")
     try:
-        response = requests.post(
-            f"http://{DEVICE_IP}:{config.VIDEO_PORT}/v1/video/t2v",
-            json={
-                "prompt": "a simple test video, black screen",
-                "height": 256,
-                "width": 256,
-                "num_frames": 17,
-                "frame_rate": 8.0,
-                "num_inference_steps": 2, # ultra low for sanity check
-                "seed": 42
-            },
-            timeout=600,
-            stream=True
-        )
+        unload_service(config.TTS_PORT)
+        unload_service(config.MUSIC_PORT)
+        unload_service(config.ASR_PORT)
+        unload_service(config.VISION_PORT)
+
+        image_path = create_dummy_png()
+        with open(image_path, "rb") as image_file:
+            response = requests.post(
+                f"http://{DEVICE_IP}:{config.VIDEO_PORT}/v1/video/async_i2v",
+                data={
+                    "prompt": "Bright daylight, subtle cloud motion, gentle wind, stable composition.",
+                    "height": 384,
+                    "width": 640,
+                    "num_frames": 9,
+                    "frame_rate": 24.0,
+                    "num_inference_steps": 8,
+                    "seed": 42,
+                    "enhance_prompt": "false",
+                    "negative_prompt": "blurry, noisy, grainy, dark, flicker, jitter, text, watermark, AI artifacts",
+                    "cfg_scale_video": 3.0,
+                    "stg_scale_video": 1.0,
+                },
+                files={"image": ("test_frame.png", image_file, "image/png")},
+                timeout=60,
+            )
         if response.status_code == 200:
-            print(f"  [OK] Video generation successful!")
+            data = response.json()
+            task_id = data.get("task_id")
+            if not task_id:
+                print(f"  [ERROR] Video task submission missing task_id: {data}")
+                return False
+
+            print(f"  [OK] Video task created: {task_id}")
+            status_url = f"http://{DEVICE_IP}:{config.VIDEO_PORT}/v1/video/tasks/{task_id}"
+            result = None
+            for _ in range(60):
+                time.sleep(10)
+                poll = requests.get(status_url, timeout=10)
+                poll.raise_for_status()
+                result = poll.json()
+                status = result.get("status")
+                print(f"  [POLL] Video task status: {status}")
+                if status == "completed":
+                    break
+                if status == "failed":
+                    print(f"  [ERROR] Video task failed: {result.get('error')}")
+                    return False
+
+            if not result or result.get("status") != "completed":
+                print("  [ERROR] Video task did not complete within the timeout window.")
+                return False
+
+            video_url = result.get("url")
+            if not video_url:
+                print(f"  [ERROR] Completed video task missing output URL: {result}")
+                return False
+
+            download = requests.get(video_url, timeout=120, stream=True)
+            download.raise_for_status()
             filename = "test_video_output.mp4"
             with open(filename, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
+                for chunk in download.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
             print(f"  [SAVED] Video saved to: {filename}")
-            return True
+
+            unload = requests.post(
+                f"http://{DEVICE_IP}:{config.VIDEO_PORT}/v1/internal/unload",
+                timeout=15,
+            )
+            unload.raise_for_status()
+
+            for _ in range(10):
+                time.sleep(3)
+                health = requests.get(
+                    f"http://{DEVICE_IP}:{config.VIDEO_PORT}/health",
+                    timeout=10,
+                )
+                health.raise_for_status()
+                health_data = health.json()
+                if not health_data.get("vram_loaded", False):
+                    print("  [OK] Video model unloaded cleanly after test.")
+                    return True
+
+            print("  [ERROR] Video model stayed loaded after unload request.")
+            return False
         else:
             print(f"  [ERROR] Video failed: {response.status_code}")
             return False

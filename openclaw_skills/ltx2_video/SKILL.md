@@ -1,240 +1,157 @@
 ---
 name: ltx2_video
-description: API documentation for the LTX-2 Video server. Supports text-to-video (T2V) and image-to-video (I2V) generation with audio.
+description: Agent-facing API guide for the LTX-2.3 video server. Covers async text-to-video and image-to-video generation, polling, outputs, and prompting guidance for cleaner local results.
 ---
 
 # LTX-2.3 Video Generation API
 
-This skill provides the API specification for the LTX-2.3 Video server. LTX-2.3 brings improved audio-visual quality and synchronization over LTX-2. Agents can use this to generate videos from text prompts or input images.
-
 ## Server Details
 
-- **Base URL**: `http://{{HUB_IP}}:9000`
-- **OpenAPI Spec**: `openapi.yaml` (in this directory)
+- **Base URL**: `http://192.168.1.26:8004`
+- **OpenAPI Spec**: `openapi.yaml`
 
 > [!IMPORTANT]
-> **Timeout Setting**: The first request may take **60–120 seconds** to load the model. Set your HTTP client timeout accordingly.
-> **Cold Start**: The model auto-unloads after idle. First request after idle triggers a reload (~90s).
+> Use the async endpoints. Sync endpoints are legacy and can hold the connection open for minutes.
 
-## API Endpoints
+## Endpoints
 
-| Mode | Method | Endpoint | Content-Type | Notes |
-|---|---|---|---|---|
-| Async T2V (recommended) | POST | `/v1/video/async_t2v` | `application/json` | Returns `task_id` immediately |
-| Async I2V (recommended) | POST | `/v1/video/async_i2v` | `multipart/form-data` | Returns `task_id` immediately |
-| Poll Task Status | GET | `/v1/video/tasks/{task_id}` | — | Returns `processing`, `completed`, or `failed` |
-| Download Video | GET | `/outputs/{filename}` | — | Serve generated MP4 |
-| Sync T2V (legacy) | POST | `/v1/video/t2v` | `application/json` | Blocks until done (~2 min) |
-| Sync I2V (legacy) | POST | `/v1/video/i2v` | `multipart/form-data` | Blocks until done (~2 min) |
-| Health Check | GET | `/health` | — | |
+| Purpose | Method | Endpoint | Content-Type |
+|---|---|---|---|
+| Async text-to-video | `POST` | `/v1/video/async_t2v` | `application/json` |
+| Async image-to-video | `POST` | `/v1/video/async_i2v` | `multipart/form-data` |
+| Poll task | `GET` | `/v1/video/tasks/{task_id}` | - |
+| Download output | `GET` | `/outputs/{filename}` | - |
+| Health | `GET` | `/health` | - |
+| Manual unload | `POST` or `GET` | `/v1/internal/unload` | - |
 
-> [!IMPORTANT]
-> **Use the async endpoints.** Sync endpoints hold the HTTP connection for 1–2 minutes and will timeout most HTTP clients.
+## Async Text-to-Video
 
----
-
-## Async Text-to-Video (Recommended)
-
-### Step 1: Submit
+### Submit
 **POST** `/v1/video/async_t2v`
 
 ```json
 {
-  "prompt": "A cinematic wide shot of a sunset over the ocean...",
-  "height": 512,
-  "width": 768,
-  "num_frames": 121,
+  "prompt": "A bright cinematic daylight shot of a lone explorer standing on a snowy mountain summit as wind moves the coat slightly and the camera slowly pushes in.",
+  "height": 576,
+  "width": 1024,
+  "num_frames": 25,
   "frame_rate": 24.0,
-  "num_inference_steps": 60,
-  "cfg_scale_video": 4.0,
-  "stg_scale_video": 1.2,
-  "seed": 42
+  "num_inference_steps": 20,
+  "seed": 42,
+  "negative_prompt": "blurry, noisy, grainy, low detail, dark, flicker, jitter, deformed face, warped hands, extra limbs, text, watermark, AI artifacts",
+  "enhance_prompt": true,
+  "cfg_scale_video": 3.0,
+  "stg_scale_video": 1.0,
+  "cfg_scale_audio": 7.0,
+  "modality_scale": 3.0
 }
 ```
 
-**Response:**
-```json
-{"task_id": "abc123", "status": "processing", "message": "Task queued. Poll GET /v1/video/tasks/{task_id}"}
-```
-
-### Step 2: Poll
+### Poll
 **GET** `/v1/video/tasks/{task_id}`
 
-Poll every 5–10 seconds until `status` changes.
-
-**While processing:**
+**Processing**
 ```json
 {"status": "processing"}
 ```
 
-**On success:**
+**Completed**
 ```json
-{"status": "completed", "url": "http://192.168.1.26:9000/v1/video/outputs/ltx2_abc123.mp4"}
+{"status": "completed", "url": "http://192.168.1.26:8004/outputs/ltx2_<task_id>.mp4"}
 ```
 
-**On failure:**
+**Failed**
 ```json
 {"status": "failed", "error": "error message"}
 ```
 
-### Step 3: Download
-Fetch the video from the `url` returned in the completed task.
+## Async Image-to-Video
 
----
+### Submit
+**POST** `/v1/video/async_i2v`
 
-## Async Image-to-Video (Recommended)
+Multipart fields:
+- `prompt`
+- `image`
+- `height` default `512`
+- `width` default `768`
+- `num_frames` default `121`
+- `frame_rate` default `24.0`
+- `num_inference_steps` default `20`
+- `seed` default `42`
+- `negative_prompt`
+- `enhance_prompt` default `true`
+- `cfg_scale_video` default `3.0`
+- `stg_scale_video` default `1.0`
 
-### Step 1: Submit
-**POST** `/v1/video/async_i2v`  
-**Content-Type**: `multipart/form-data`
+### Poll and download
+Same pattern as async text-to-video.
 
-**Fields:**
-- `prompt` (String): Describes the desired motion and scene continuation.
-- `image` (File): The input image to animate.
-- `height` (Integer, default 512)
-- `width` (Integer, default 768)
-- `num_frames` (Integer, default 121)
-- `frame_rate` (Float, default 25.0)
-- `num_inference_steps` (Integer, default 60)
-- `cfg_scale_video` (Float, default 4.0)
-- `stg_scale_video` (Float, default 1.2)
-- `seed` (Integer, default 42)
+## Current Defaults
 
-**Response:**
-```json
-{"task_id": "def456", "status": "processing", "message": "Task queued. Poll GET /v1/video/tasks/{task_id}"}
-```
-
-### Step 2–3: Poll + Download
-Same as T2V above.
-
----
-
-## WhatsApp Compatibility
-
-> [!TIP]
-> The output MP4 is **already WhatsApp-compatible**: H.264 video, AAC audio, yuv420p pixel format, MP4 container. No re-encoding needed — send the downloaded file directly.
-
-## Example Agent Workflow: WhatsApp Image → Video
-
-When a user sends an image via WhatsApp with a message like *"animate this"*:
-
-1. **Download the image** from the WhatsApp media URL to get the raw bytes.
-2. **Write a prompt** describing the desired animation (use the prompting guide below).
-3. **Submit to I2V**:
-   ```
-   POST http://192.168.1.26:9000/v1/video/async_i2v
-   Content-Type: multipart/form-data
-   Fields: prompt="...", image=<downloaded bytes>
-   ```
-4. **Poll** `GET /v1/video/tasks/{task_id}` every 5–10 seconds.
-5. **Download** the MP4 from the `url` in the completed response.
-6. **Send** the MP4 file back to the WhatsApp conversation — it plays inline without conversion.
-
----
-
-## Parameter Reference
-
-| Parameter | T2V | I2V | Default | Notes |
-|---|---|---|---|---|
-| `prompt` | ✅ | ✅ | — | Required. See prompting guide below |
-| `height` | ✅ | ✅ | 512 | Must be multiple of 64 |
-| `width` | ✅ | ✅ | 768 | Must be multiple of 64 |
-| `num_frames` | ✅ | ✅ | 121 | 49≈2s, 97≈4s, 121≈5s at 24fps |
-| `frame_rate` | ✅ | ✅ | 25.0 | fps of output video |
-| `num_inference_steps` | ✅ | ✅ | 60 | 40 = faster, 60+ = better quality |
-| `seed` | ✅ | ✅ | 42 | For reproducibility |
-| `cfg_scale_video` | ✅ | ✅ | 4.0 | Video guidance strength |
-| `stg_scale_video` | ✅ | ✅ | 1.2 | Spatiotemporal guidance |
-| `cfg_scale_audio` | ✅ | — | 7.0 | Audio guidance strength |
-| `modality_scale` | ✅ | — | 3.0 | Audio/video cross-modal guidance |
-
----
+| Parameter | Default |
+|---|---|
+| `frame_rate` | `24.0` |
+| `num_inference_steps` | `20` |
+| `cfg_scale_video` | `3.0` |
+| `stg_scale_video` | `1.0` |
+| `cfg_scale_audio` | `7.0` |
+| `modality_scale` | `3.0` |
 
 ## Prompting Guide
 
-Good prompts dramatically improve quality. Write as **one flowing paragraph** in **present tense**.
+- Prefer bright daylight or well-lit scenes for the cleanest local output.
+- Keep to one main subject and one simple camera move.
+- For image-to-video, describe only subtle motion that should happen after the input image.
+- Avoid overloaded fantasy scenes, many moving objects, or rapid scene changes.
+- Short clips stay cleaner. `17` to `25` frames is a good local range for high-clarity tests.
+- Use reference-image I2V when quality matters more than novelty.
 
-### Key Aspects to Include (in order)
+## Recommended Quality Recipes
 
-1. **Establish the shot** — Camera angle, scale, film genre/style
-   > `Cinematic medium shot`, `Handheld documentary style`, `Static POV from inside the oven`
+### Clean local I2V
 
-2. **Set the scene** — Lighting, color palette, textures, atmosphere
-   > `Warm golden light`, `neon glow`, `flickering candles`, `fog and rain`
+- `1024x576`
+- `24 fps`
+- `25 frames`
+- `16-20` inference steps
+- `cfg_scale_video=3.0`
+- `stg_scale_video=1.0`
+- simple prompt
 
-3. **Describe the action** — A natural sequence from beginning to end
-   > `The camera slowly pushes in... then the subject turns to face the viewer...`
+### Fast sanity T2V
 
-4. **Define characters** — Age, clothing, hair, emotions via physical cues
-   > `A woman in her 30s with short brown hair, eyes wide with focus`
+- `768x512`
+- `24 fps`
+- `17 frames`
+- `8-12` inference steps
 
-5. **Identify camera movement** — When it shifts and to what
-   > `Camera pans right to reveal...`, `Slow dolly back until...`, `Cranes up to show...`
+## Windows CLI Submission
 
-6. **Describe audio** — Ambient sounds, dialogue (in quotes), voice style
-   > `Ambient live music`, `"That's it... Dad's lost it."` (quiet whisper)
+> [!IMPORTANT]
+> For JSON requests on Windows, write the body to a temporary `payload.json` file and use `curl -d @payload.json`. Do not inline JSON in the command because quoting often breaks at the first space.
 
-### For Best Results
+Example:
 
-- ✅ Write as **one flowing paragraph** (4–8 sentences)
-- ✅ Use **present tense** verbs
-- ✅ Match detail to shot scale — closeups need more precision than wide shots
-- ✅ Specify camera's **relationship to subject**, not absolute moves
-- ❌ Don't use lists or bullet points in the prompt
-- ❌ Don't describe impossible continuous action (model window is 2–5s)
-- ❌ Don't use vague style modifiers ("cool", "interesting") without specifics
+```powershell
+@'
+{
+  "prompt": "A bright cinematic daylight shot of a lone explorer standing on a snowy mountain summit as wind moves the coat slightly and the camera slowly pushes in.",
+  "height": 576,
+  "width": 1024,
+  "num_frames": 25,
+  "frame_rate": 24.0,
+  "num_inference_steps": 20,
+  "seed": 42
+}
+'@ | Set-Content payload.json
 
-### Style Categories
-
-- **Animation:** `stop-motion`, `2D/3D animation`, `claymation`, `hand-drawn`
-- **Stylized:** `comic book`, `cyberpunk`, `8-bit pixel`, `surreal`, `minimalist`, `painterly`
-- **Cinematic:** `period drama`, `film noir`, `fantasy`, `epic space opera`, `thriller`, `documentary`
-
-### Visual Details Vocabulary
-
-| Category | Examples |
-|---|---|
-| Lighting | `flickering candles`, `neon glow`, `natural sunlight`, `dramatic shadows` |
-| Textures | `rough stone`, `smooth metal`, `worn fabric`, `glossy surfaces` |
-| Color palette | `vibrant`, `muted`, `monochromatic`, `high contrast` |
-| Atmosphere | `fog`, `rain`, `dust`, `particles`, `smoke` |
-
-### Camera Language
-
-| Motion | Keywords |
-|---|---|
-| Translation | `follows`, `tracks`, `pushes in`, `pulls back`, `dollies back` |
-| Rotation | `pans across`, `circles around`, `tilts upward`, `over-the-shoulder` |
-| Characteristics | `handheld movement`, `lens flares`, `film grain`, `jittery stop-motion` |
-| Scale | `expansive`, `epic`, `intimate`, `claustrophobic` |
-| Pacing | `slow motion`, `time-lapse`, `rapid cuts`, `lingering shot`, `fade-in` |
-
-### Example Prompts
-
-**Action/Cinematic:**
-```
-Cinematic action packed shot. The man says silently: "We need to run." The camera zooms in 
-on his mouth then immediately screams: "NOW!". The camera zooms back out, he turns around 
-and starts running away, the camera tracks his run in handheld style. The camera cranes up 
-and shows him run into the distance down the street at a busy New York night.
+curl.exe -X POST "http://192.168.1.26:8004/v1/video/async_t2v" ^
+  -H "Content-Type: application/json" ^
+  -d @payload.json
 ```
 
-**Character/Comedy:**
-```
-INT. OVEN – DAY. Static camera from inside the oven, looking outward through the slightly 
-fogged glass door. Warm golden light glows around freshly baked cookies. The baker's face 
-fills the frame, eyes wide with focus, his breath fogging the glass as he leans in. Baker 
-(whispering dramatically): "Today… I achieve perfection." Coworker (mouth full): "Nope. 
-You forgot the sugar." Pixar style acting and timing.
-```
+## Health and Unload
 
-### Timeout
-
-- **First Request Slow**: The API loads models on demand. The first request can take 1–2 minutes.
-
-## Pre-flight & Health
-
-- **GET** `/health` — Returns `{"status": "running", "model_loaded": true/false}`
-- **POST** `/v1/internal/unload` — Manually unload model from VRAM to free resources
-
+- `GET /health` returns `{"status":"running","device":"cuda","vram_loaded":true|false}`
+- `POST /v1/internal/unload` unloads the model so VRAM can be reclaimed

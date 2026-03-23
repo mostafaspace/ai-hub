@@ -43,6 +43,7 @@ SKIP_AUDIO_DECODE = os.getenv("LTX_SKIP_AUDIO_DECODE", "1") == "1"
 # Final VAE decode is the most crash-prone step on this Windows box. Force it
 # to CPU so we trade speed for reliability and can actually finish i2v renders.
 VAE_DECODE_DEVICE = "cpu"
+REGISTRY_MODE = os.getenv("LTX_REGISTRY_MODE", "dummy").strip().lower()
 
 
 class TI2VidTwoStagesPipeline:
@@ -65,9 +66,9 @@ class TI2VidTwoStagesPipeline:
     ):
         self.device = device
         self.dtype = torch.bfloat16
-        # Use a StateDictRegistry to cache weights on CPU, which keeps LoRA fusion in RAM
-        # instead of VRAM, avoiding OOM during the 22B model refinement.
-        self.registry = StateDictRegistry()
+        # CPU state-dict caching lowers VRAM pressure but can explode Windows page-file
+        # usage on this workstation. Prefer the dummy registry unless explicitly overridden.
+        self.registry = StateDictRegistry() if REGISTRY_MODE == "state_dict" else DummyRegistry()
         self.stage_1_model_ledger = ModelLedger(
             dtype=self.dtype,
             device=device,

@@ -149,7 +149,7 @@ def start_servers():
     for server_conf in SERVERS:
         print(f"Starting {server_conf['name']} server...")
         env = os.environ.copy()
-        env["HF_HOME"] = config.HF_HOME # Ensure explicit HF_HOME
+        env["HF_HOME"] = str(config.HF_HOME).strip() # Ensure explicit HF_HOME without stray spaces
         env["PYTHONUNBUFFERED"] = "1"    # Force unbuffered output
         
         # Force single GPU (device 0) for ALL servers to prevent tensor device mismatch deadlocks
