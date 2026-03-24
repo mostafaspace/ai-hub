@@ -46,6 +46,18 @@ FORMAT_PROFILES = {
         "video_bitrate": "4M",
         "audio_bitrate": "160k",
     },
+    "cinematic_wide": {
+        "label": "Cinematic Wide",
+        "kind": "video",
+        "container": "mp4",
+        "video_codec": "libx264",
+        "audio_codec": "aac",
+        "width": 1920,
+        "height": 1080,
+        "fps": 24,
+        "video_bitrate": "10M",
+        "audio_bitrate": "256k",
+    },
     "podcast_mp3": {
         "label": "Podcast MP3",
         "kind": "audio",

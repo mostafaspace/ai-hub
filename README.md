@@ -149,13 +149,35 @@ The Orchestrator now exposes a **Practical Studio** toolkit at `http://<device-i
 - **Timeline Editor Lite + Safe Render** - Store clip/audio/subtitle layout, build a render plan, and create a new rendered output without mutating source media.
 - **Auto-Captions & Burn-In** - Generate approximate `.srt` subtitles via ASR and optionally burn them into a copied video output.
 - **Thumbnail / Contact Sheet Generation** - Produce preview assets for videos with FFmpeg.
-- **Output Format Profiles** - Apply reusable presets such as `youtube_short`, `discord_clip`, `podcast_mp3`, and `whatsapp_voice`.
+- **Output Format Profiles** - Apply reusable presets such as `youtube_short`, `discord_clip`, `cinematic_wide`, `podcast_mp3`, and `whatsapp_voice`.
 - **Voice Audition Mode** - Generate the same script in multiple voices and compare the outputs side-by-side.
 - **Prompt Compare Mode** - Run multiple prompt variants through the Vision backend and collect all outputs in one task.
 - **Director-to-Project Runs** - Launch the existing Director workflow behind an async Studio task and automatically attach the final video to a project.
 - **Project Export / Import** - Package a workspace plus bundled local assets into a zip, then re-import it on another machine.
 - **Task Durability** - Studio tasks persist to disk, survive restarts as `interrupted`, and can be cancelled, resumed, or retried.
 - **Webhooks & Observability** - Optional per-task webhook delivery plus Studio metrics for counts, durations, failures, and storage usage.
+
+### Workflow Packs
+
+The Orchestrator now also exposes additive workflow packs on top of Practical Studio:
+
+- **Short-Form Content Factory** - Turn long videos, webinars, podcasts, and founder recordings into clip packs with hooks, thumbnails, subtitles, and platform variants.
+- **Podcast / Episode Pack** - Turn notes, outlines, articles, URLs, or brochure text into a script, voice auditions, final narration, cover art, and an optional teaser video.
+- **Video Localization** - Produce dubbed audio, translated subtitles, and burned-caption exports for target languages such as Arabic, French, and Spanish.
+- **Meeting Deliverables** - Convert meeting recordings into transcripts, summaries, action items, follow-up emails, stakeholder briefings, and recap clips.
+- **Product Marketing Kit** - Turn product copy, URLs, brochures, or feature lists into hero visuals, comparison creative, voiceover ads, hooks, and teaser assets.
+
+All five workflows reuse the same Studio project/task model and async polling controls as the rest of the toolkit.
+
+### Cinematic Studio Workflows
+
+The Studio toolkit also now includes creator-first cinematic workflows for high-end visual packages:
+
+- **Unified Cinematic Director** - Send one request with either source images or just a concept, and let the orchestrator decide whether to run image-guided motion or prompt-guided scene generation.
+- **Series Intro Builder** - Turn a title plus concept into a scored intro package with a saved shot plan, storyboard frames, animated shots, narration, and a final cinematic cut.
+- **Immersive Video Builder** - Turn a concept into a long-form music-driven visual sequence with storyboard frames, i2v shots, and a polished final render for ambience videos, title sequences, or visualizers.
+
+Both cinematic workflows are additive Studio tasks and attach every generated asset back to the project workspace.
 
 ### Studio Task Pattern
 

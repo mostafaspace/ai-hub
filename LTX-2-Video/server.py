@@ -65,6 +65,8 @@ GEMMA_ROOT = getattr(config, "VIDEO_GEMMA_ROOT", os.path.join(config.HF_HOME, "g
 DISTILLED_LORA = getattr(config, "VIDEO_DISTILLED_LORA", os.path.join(config.HF_HOME, "Lightricks/LTX-2.3/ltx-2.3-22b-distilled-lora-384.safetensors"))
 DISTILLED_LORA_STRENGTH = getattr(config, "VIDEO_DISTILLED_LORA_STRENGTH", 0.6)
 SPATIAL_UPSAMPLER = getattr(config, "VIDEO_SPATIAL_UPSAMPLER", os.path.join(config.HF_HOME, "Lightricks/LTX-2.3/ltx-2.3-spatial-upscaler-x2-1.1.safetensors"))
+ENABLE_DISTILLED_LORA = bool(getattr(config, "VIDEO_ENABLE_DISTILLED_LORA", True))
+RETRY_WITHOUT_DISTILLED_LORA_ON_OOM = bool(getattr(config, "VIDEO_RETRY_WITHOUT_DISTILLED_LORA_ON_OOM", True))
 
 # Quality-biased defaults based on the official LTX-2 guidance and the linked
 # Kaggle notebook: prompt enhancement on, 24 fps, and more stage-1 denoising.
@@ -82,6 +84,7 @@ DEFAULT_STG_BLOCKS = [29]
 class ModelManager:
     def __init__(self, idle_timeout: float = 60.0, check_interval: float = 10.0):
         self.pipeline = None
+        self.use_distilled_lora = ENABLE_DISTILLED_LORA
         self.last_active = time.time()
         self.idle_timeout = idle_timeout
         self.check_interval = check_interval
@@ -115,6 +118,12 @@ class ModelManager:
         with self.lock:
             self._unload_internal()
 
+    def set_use_distilled_lora(self, enabled: bool, unload_existing: bool = True):
+        with self.lock:
+            self.use_distilled_lora = bool(enabled)
+            if unload_existing:
+                self._unload_internal()
+
     def touch(self):
         """Reset the idle timer. Call after every generation completes."""
         self.last_active = time.time()
@@ -125,10 +134,10 @@ class ModelManager:
             if self.pipeline is not None:
                 return self.pipeline
             
-            print(f"[LTX-2] Loading LTX-2 Pipeline models...")
+            print(f"[LTX-2] Loading LTX-2 Pipeline models... distilled_lora={'on' if self.use_distilled_lora else 'off'}")
             # Create distilled LORA params
             distilled_lora_config = None
-            if os.path.exists(DISTILLED_LORA):
+            if self.use_distilled_lora and os.path.exists(DISTILLED_LORA):
                 distilled_lora_config = [
                     # The official two-stage examples use a milder 0.6 distilled
                     # LoRA strength for cleaner refinement with the full model.
@@ -138,7 +147,7 @@ class ModelManager:
                         LTXV_LORA_COMFY_RENAMING_MAP,
                     )
                 ]
-            else:
+            elif self.use_distilled_lora:
                 print(f"[LTX-2] WARNING: Distilled LORA not found at {DISTILLED_LORA}. Will attempt to run without it, but Quality will drop.")
 
             # To avoid huge footprint, we default FP8 to True in production unless forced otherwise.
@@ -335,6 +344,131 @@ def _encode_and_save_video(video, audio, num_frames, frame_rate, task_id: str):
     return url
 
 
+def _cleanup_cuda_memory() -> None:
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _is_oom_error(exc: Exception) -> bool:
+    if isinstance(exc, torch.OutOfMemoryError):
+        return True
+    return "out of memory" in str(exc).lower()
+
+
+def _run_t2v_once(
+    task_id: str,
+    prompt: str,
+    height: int,
+    width: int,
+    num_frames: int,
+    frame_rate: float,
+    num_inference_steps: int,
+    seed: int,
+    cfg_scale_video: float,
+    stg_scale_video: float,
+    cfg_scale_audio: float,
+    modality_scale: float,
+    negative_prompt: str,
+    enhance_prompt: bool,
+) -> str:
+    pipeline = manager.get_pipeline()
+    _warn_if_quality_risky(height, width, num_frames, frame_rate)
+    video_guider, audio_guider = _build_guiders(
+        cfg_scale_video=cfg_scale_video,
+        stg_scale_video=stg_scale_video,
+        cfg_scale_audio=cfg_scale_audio,
+        modality_scale=modality_scale,
+    )
+    enhance_prompt = _resolve_enhance_prompt(
+        prompt=prompt,
+        enhance_prompt=enhance_prompt,
+        has_image_conditioning=False,
+    )
+    logger.info(f"[Task {task_id}] T2V generating: '{prompt[:50]}...'")
+    with torch.inference_mode():
+        video, audio = pipeline(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            seed=seed,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+            frame_rate=frame_rate,
+            num_inference_steps=num_inference_steps,
+            video_guider_params=video_guider,
+            audio_guider_params=audio_guider,
+            images=[],
+            enhance_prompt=enhance_prompt,
+        )
+        return _encode_and_save_video(video, audio, num_frames, frame_rate, task_id)
+
+
+def _run_i2v_once(
+    task_id: str,
+    image_path: str,
+    prompt: str,
+    height: int,
+    width: int,
+    num_frames: int,
+    frame_rate: float,
+    num_inference_steps: int,
+    seed: int,
+    cfg_scale_video: float,
+    stg_scale_video: float,
+    negative_prompt: str,
+    enhance_prompt: bool,
+) -> str:
+    pipeline = manager.get_pipeline()
+    _warn_if_quality_risky(height, width, num_frames, frame_rate)
+    video_guider, audio_guider = _build_guiders(
+        cfg_scale_video=cfg_scale_video,
+        stg_scale_video=stg_scale_video,
+        cfg_scale_audio=DEFAULT_AUDIO_CFG_SCALE,
+        modality_scale=DEFAULT_MODALITY_SCALE,
+    )
+    image_conditions = [(image_path, 0, 1.0)]
+    enhance_prompt = _resolve_enhance_prompt(
+        prompt=prompt,
+        enhance_prompt=enhance_prompt,
+        has_image_conditioning=True,
+    )
+    logger.info(f"[Task {task_id}] I2V generating: '{prompt[:50]}...'")
+    with torch.inference_mode():
+        video, audio = pipeline(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            seed=seed,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+            frame_rate=frame_rate,
+            num_inference_steps=num_inference_steps,
+            video_guider_params=video_guider,
+            audio_guider_params=audio_guider,
+            images=image_conditions,
+            enhance_prompt=enhance_prompt,
+        )
+        return _encode_and_save_video(video, audio, num_frames, frame_rate, task_id)
+
+
+def _maybe_retry_without_distilled_lora(task_id: str, exc: Exception) -> bool:
+    if not _is_oom_error(exc):
+        return False
+    if not RETRY_WITHOUT_DISTILLED_LORA_ON_OOM:
+        return False
+    if not manager.use_distilled_lora:
+        return False
+
+    logger.warning(
+        "[Task %s] OOM while distilled LoRA is enabled. Unloading and retrying without distilled LoRA.",
+        task_id,
+    )
+    manager.set_use_distilled_lora(False, unload_existing=True)
+    _cleanup_cuda_memory()
+    return True
+
+
 def _process_async_t2v(task_id: str, prompt: str, height: int, width: int,
                        num_frames: int, frame_rate: float, num_inference_steps: int,
                        seed: int, cfg_scale_video: float, stg_scale_video: float,
@@ -345,33 +479,21 @@ def _process_async_t2v(task_id: str, prompt: str, height: int, width: int,
     with generation_lock:
         is_generating = True
         try:
-            pipeline = manager.get_pipeline()
-            _warn_if_quality_risky(height, width, num_frames, frame_rate)
-            video_guider, audio_guider = _build_guiders(
-                cfg_scale_video=cfg_scale_video,
-                stg_scale_video=stg_scale_video,
-                cfg_scale_audio=cfg_scale_audio,
-                modality_scale=modality_scale,
-            )
-            enhance_prompt = _resolve_enhance_prompt(
-                prompt=prompt,
-                enhance_prompt=enhance_prompt,
-                has_image_conditioning=False,
-            )
-            logger.info(f"[Task {task_id}] T2V generating: '{prompt[:50]}...'")
-            with torch.inference_mode():
-                video, audio = pipeline(
-                    prompt=prompt, negative_prompt=negative_prompt,
-                    seed=seed, height=height, width=width,
-                    num_frames=num_frames, frame_rate=frame_rate,
-                    num_inference_steps=num_inference_steps,
-                    video_guider_params=video_guider, audio_guider_params=audio_guider,
-                    images=[],
-                    enhance_prompt=enhance_prompt,
+            try:
+                url = _run_t2v_once(
+                    task_id, prompt, height, width, num_frames, frame_rate, num_inference_steps,
+                    seed, cfg_scale_video, stg_scale_video, cfg_scale_audio, modality_scale,
+                    negative_prompt, enhance_prompt,
                 )
-            
-                url = _encode_and_save_video(video, audio, num_frames, frame_rate, task_id)
-                video_tasks[task_id] = {"status": "completed", "url": url}
+            except Exception as first_exc:
+                if not _maybe_retry_without_distilled_lora(task_id, first_exc):
+                    raise
+                url = _run_t2v_once(
+                    task_id, prompt, height, width, num_frames, frame_rate, num_inference_steps,
+                    seed, cfg_scale_video, stg_scale_video, cfg_scale_audio, modality_scale,
+                    negative_prompt, enhance_prompt,
+                )
+            video_tasks[task_id] = {"status": "completed", "url": url}
             logger.info(f"[Task {task_id}] T2V completed.")
         except Exception as e:
             logger.error(f"[Task {task_id}] T2V failed: {e}")
@@ -380,6 +502,7 @@ def _process_async_t2v(task_id: str, prompt: str, height: int, width: int,
         finally:
             is_generating = False
             manager.touch()
+            _cleanup_cuda_memory()
 
 
 def _process_async_i2v(task_id: str, image_path: str, prompt: str,
@@ -392,34 +515,21 @@ def _process_async_i2v(task_id: str, image_path: str, prompt: str,
     with generation_lock:
         is_generating = True
         try:
-            pipeline = manager.get_pipeline()
-            _warn_if_quality_risky(height, width, num_frames, frame_rate)
-            video_guider, audio_guider = _build_guiders(
-                cfg_scale_video=cfg_scale_video,
-                stg_scale_video=stg_scale_video,
-                cfg_scale_audio=DEFAULT_AUDIO_CFG_SCALE,
-                modality_scale=DEFAULT_MODALITY_SCALE,
-            )
-            image_conditions = [(image_path, 0, 1.0)]
-            enhance_prompt = _resolve_enhance_prompt(
-                prompt=prompt,
-                enhance_prompt=enhance_prompt,
-                has_image_conditioning=True,
-            )
-            logger.info(f"[Task {task_id}] I2V generating: '{prompt[:50]}...'")
-            with torch.inference_mode():
-                video, audio = pipeline(
-                    prompt=prompt, negative_prompt=negative_prompt,
-                    seed=seed, height=height, width=width,
-                    num_frames=num_frames, frame_rate=frame_rate,
-                    num_inference_steps=num_inference_steps,
-                    video_guider_params=video_guider, audio_guider_params=audio_guider,
-                    images=image_conditions,
-                    enhance_prompt=enhance_prompt,
+            try:
+                url = _run_i2v_once(
+                    task_id, image_path, prompt, height, width, num_frames, frame_rate,
+                    num_inference_steps, seed, cfg_scale_video, stg_scale_video,
+                    negative_prompt, enhance_prompt,
                 )
-            
-                url = _encode_and_save_video(video, audio, num_frames, frame_rate, task_id)
-                video_tasks[task_id] = {"status": "completed", "url": url}
+            except Exception as first_exc:
+                if not _maybe_retry_without_distilled_lora(task_id, first_exc):
+                    raise
+                url = _run_i2v_once(
+                    task_id, image_path, prompt, height, width, num_frames, frame_rate,
+                    num_inference_steps, seed, cfg_scale_video, stg_scale_video,
+                    negative_prompt, enhance_prompt,
+                )
+            video_tasks[task_id] = {"status": "completed", "url": url}
             logger.info(f"[Task {task_id}] I2V completed.")
         except Exception as e:
             logger.error(f"[Task {task_id}] I2V failed: {e}")
@@ -433,8 +543,7 @@ def _process_async_i2v(task_id: str, image_path: str, prompt: str,
                     os.remove(image_path)
             except:
                 pass
-            gc.collect()
-            torch.cuda.empty_cache()
+            _cleanup_cuda_memory()
 
 
 @app.post("/v1/video/async_t2v")
@@ -493,7 +602,8 @@ async def async_i2v(
 async def internal_status():
     return {
         "status": "generating" if is_generating else "idle",
-        "model_loaded": manager.pipeline is not None
+        "model_loaded": manager.pipeline is not None,
+        "distilled_lora_enabled": manager.use_distilled_lora,
     }
 
 

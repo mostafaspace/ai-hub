@@ -25,6 +25,8 @@ from orchestrator.media_utils import mux_video_and_audio, get_media_duration, lo
 from orchestrator.studio_media import extract_audio_for_transcription, extract_thumbnail, detect_duration
 from orchestrator.utils_api import utils_router
 from orchestrator.studio_api import studio_router
+from orchestrator.business_api import business_router
+from orchestrator.cinematic_api import cinematic_router
 
 try:
     from api_utils import GracefulJSONRoute
@@ -74,6 +76,8 @@ app.add_middleware(
 # Register Utility APIs
 app.include_router(utils_router)
 app.include_router(studio_router)
+app.include_router(business_router)
+app.include_router(cinematic_router)
 
 # --- Mount Dashboard Static Files ---
 DASHBOARD_DIR = os.path.join(os.path.dirname(__file__), "dashboard")

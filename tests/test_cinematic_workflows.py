@@ -1,0 +1,432 @@
+import asyncio
+import json
+import os
+import sys
+
+from fastapi.testclient import TestClient
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, ROOT)
+
+import orchestrator.cinematic_api as cinematic
+import orchestrator.server as orch
+import orchestrator.studio_api as studio
+
+
+client = TestClient(orch.app)
+
+
+def configure_studio_dirs(tmp_path, monkeypatch):
+    root_dir = tmp_path / "orchestrator"
+    state_dir = root_dir / "studio_state"
+    outputs_root = root_dir / "director_outputs"
+    monkeypatch.setattr(studio, "ROOT_DIR", str(root_dir))
+    monkeypatch.setattr(studio, "STATE_DIR", str(state_dir))
+    monkeypatch.setattr(studio, "TASKS_DIR", str(state_dir / "tasks"))
+    monkeypatch.setattr(studio, "PROJECTS_DIR", str(root_dir / "studio_projects"))
+    monkeypatch.setattr(studio, "PACKS_DIR", str(root_dir / "studio_character_packs"))
+    monkeypatch.setattr(studio, "OUTPUTS_DIR", str(outputs_root / "practical"))
+    monkeypatch.setattr(studio, "UPLOADS_DIR", str(outputs_root / "practical" / "uploads"))
+    monkeypatch.setattr(studio, "EXPORTS_DIR", str(outputs_root / "practical" / "exports"))
+    monkeypatch.setattr(studio, "IMPORTS_DIR", str(outputs_root / "practical" / "imports"))
+    monkeypatch.setattr(studio, "REGISTRY_PATH", str(root_dir / "models.yaml"))
+    os.makedirs(root_dir, exist_ok=True)
+    with open(studio.REGISTRY_PATH, "w", encoding="utf-8") as handle:
+        json.dump({"backends": {}}, handle)
+    studio._ensure_dirs()
+    studio.STUDIO_TASKS.clear()
+    studio.RUNNING_TASKS.clear()
+
+
+def create_project():
+    response = client.post("/v1/studio/projects", json={"name": "Cinematic Lab", "default_profile": "cinematic_wide"})
+    assert response.status_code == 200
+    return response.json()["project_id"]
+
+
+def touch_file(path: str, content: bytes = b"data"):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(content)
+
+
+def seed_task(task_id: str):
+    studio.STUDIO_TASKS[task_id] = {
+        "task_id": task_id,
+        "status": "processing",
+        "project_id": None,
+        "events": [],
+        "cancel_requested": False,
+    }
+
+
+def test_cinematic_endpoints_queue_tasks(tmp_path, monkeypatch):
+    configure_studio_dirs(tmp_path, monkeypatch)
+    project_id = create_project()
+
+    def fake_start_background_task(task_id):
+        task = studio.STUDIO_TASKS[task_id]
+        task["status"] = "completed"
+        task["result"] = {"task_id": task_id, "status": "completed"}
+        task["finished_at"] = studio._now()
+        studio._persist_task(task)
+
+    monkeypatch.setattr(studio, "start_background_task", fake_start_background_task)
+
+    cases = [
+        (
+            f"/v1/studio/projects/{project_id}/cinematic-productions",
+            {"concept": "a war for the last ember", "production_type": "auto"},
+        ),
+        (
+            f"/v1/studio/projects/{project_id}/series-intros",
+            {"title": "Glass Kingdom", "concept": "a dynasty unraveling on a floating city"},
+        ),
+        (
+            f"/v1/studio/projects/{project_id}/immersive-videos",
+            {"concept": "an atmospheric journey through a rain-soaked neon district"},
+        ),
+    ]
+
+    for url, payload in cases:
+        response = client.post(url, json=payload)
+        assert response.status_code == 200
+        assert response.json()["status"] == "completed"
+
+
+def test_series_intro_runner_creates_plan_audio_and_final_video(tmp_path, monkeypatch):
+    configure_studio_dirs(tmp_path, monkeypatch)
+    project_id = create_project()
+    seed_task("task-intro")
+    monkeypatch.setattr(cinematic, "ffmpeg_available", lambda: True)
+
+    async def fake_build_shot_assets(task_id, project_id, label, shots, profile_name, use_i2v, quality_preset="premium"):
+        items = []
+        for index, shot in enumerate(shots, start=1):
+            clip_path = studio._output_path(task_id, f"scene-{index}.mp4")
+            touch_file(clip_path)
+            storyboard_path = studio._output_path(task_id, f"scene-{index}.png")
+            touch_file(storyboard_path)
+            items.append(
+                {
+                    "index": index,
+                    "label": shot.label or f"scene-{index}",
+                    "storyboard_url": studio._relative_output_url(storyboard_path),
+                    "clip_url": studio._relative_output_url(clip_path),
+                    "clip_path": clip_path,
+                    "animation_mode": "i2v",
+                    "duration_sec": shot.duration_sec,
+                }
+            )
+        return items
+
+    async def fake_synthesize_voice(text, voice, output_path):
+        touch_file(output_path)
+        return studio._relative_output_url(output_path)
+
+    async def fake_music(task_id, prompt, duration_sec, output_name):
+        output_path = studio._output_path(task_id, output_name)
+        touch_file(output_path)
+        return {"path": output_path, "url": studio._relative_output_url(output_path)}
+
+    async def fake_visual(task_id, clip_paths):
+        output_path = studio._output_path(task_id, "visual-sequence.mp4")
+        touch_file(output_path)
+        return {"path": output_path, "url": studio._relative_output_url(output_path), "duration_sec": 24.0}
+
+    async def fake_mix(task_id, narration_path, music_path, music_volume=0.28):
+        output_path = studio._output_path(task_id, "mixed-audio.m4a")
+        touch_file(output_path)
+        return output_path
+
+    async def fake_finalize(task_id, profile_name, visual_path, audio_path):
+        output_path = studio._output_path(task_id, "final-cinematic-cut.mp4")
+        touch_file(output_path)
+        return {"path": output_path, "url": studio._relative_output_url(output_path), "duration_sec": 60.0}
+
+    monkeypatch.setattr(cinematic, "_build_shot_assets", fake_build_shot_assets)
+    monkeypatch.setattr(cinematic, "_synthesize_voice", fake_synthesize_voice)
+    monkeypatch.setattr(cinematic, "_generate_music_track", fake_music)
+    monkeypatch.setattr(cinematic, "_assemble_visual_sequence", fake_visual)
+    monkeypatch.setattr(cinematic, "_mix_or_select_audio", fake_mix)
+    monkeypatch.setattr(cinematic, "_finalize_video", fake_finalize)
+
+    result = asyncio.run(
+        cinematic._run_series_intro_task(
+            "task-intro",
+            {
+                "project_id": project_id,
+                "title": "Glass Kingdom",
+                "concept": "a dynasty unraveling on a floating city",
+                "scene_count": 2,
+                "duration_sec": 24.0,
+                "label": "series-intro",
+            },
+        )
+    )
+
+    assert result["title"] == "Glass Kingdom"
+    assert result["final_video_url"].endswith("final-cinematic-cut.mp4")
+    assert len(result["shots"]) == 8
+    project = studio._load_project(project_id)
+    assert any(asset["label"] == "series-intro" for asset in project["assets"])
+
+
+def test_immersive_runner_falls_back_to_t2v_clips(tmp_path, monkeypatch):
+    configure_studio_dirs(tmp_path, monkeypatch)
+    project_id = create_project()
+    seed_task("task-immersive")
+    monkeypatch.setattr(cinematic, "ffmpeg_available", lambda: True)
+
+    async def fake_storyboard(task_id, shot, index, profile_name):
+        image_path = studio._output_path(task_id, f"movement-{index}.png")
+        touch_file(image_path)
+        return {"path": image_path, "url": studio._relative_output_url(image_path)}
+
+    async def fake_i2v(task_id, shot, index, image_path, profile_name, quality_preset="premium"):
+        raise RuntimeError("simulated i2v failure")
+
+    async def fake_t2v(task_id, shot, index, profile_name, quality_preset="premium"):
+        clip_path = studio._output_path(task_id, f"movement-{index}.mp4")
+        touch_file(clip_path)
+        return {"path": clip_path, "url": studio._relative_output_url(clip_path), "mode": "t2v"}
+
+    async def fake_visual(task_id, clip_paths):
+        output_path = studio._output_path(task_id, "visual-sequence.mp4")
+        touch_file(output_path)
+        return {"path": output_path, "url": studio._relative_output_url(output_path), "duration_sec": 18.0}
+
+    async def fake_music(task_id, prompt, duration_sec, output_name):
+        output_path = studio._output_path(task_id, output_name)
+        touch_file(output_path)
+        return {"path": output_path, "url": studio._relative_output_url(output_path)}
+
+    async def fake_finalize(task_id, profile_name, visual_path, audio_path):
+        output_path = studio._output_path(task_id, "final-cinematic-cut.mp4")
+        touch_file(output_path)
+        return {"path": output_path, "url": studio._relative_output_url(output_path), "duration_sec": 18.0}
+
+    monkeypatch.setattr(cinematic, "_generate_storyboard_image", fake_storyboard)
+    monkeypatch.setattr(cinematic, "_generate_i2v_clip", fake_i2v)
+    monkeypatch.setattr(cinematic, "_generate_t2v_clip", fake_t2v)
+    monkeypatch.setattr(cinematic, "_assemble_visual_sequence", fake_visual)
+    monkeypatch.setattr(cinematic, "_generate_music_track", fake_music)
+    monkeypatch.setattr(cinematic, "_finalize_video", fake_finalize)
+
+    result = asyncio.run(
+        cinematic._run_immersive_video_task(
+            "task-immersive",
+            {
+                "project_id": project_id,
+                "concept": "an atmospheric journey through a rain-soaked neon district",
+                "scene_count": 1,
+                "duration_sec": 18.0,
+                "label": "immersive-video",
+            },
+        )
+    )
+
+    assert result["concept"].startswith("an atmospheric journey")
+    assert result["shots"][0]["animation_mode"] == "t2v"
+    assert result["final_video_url"].endswith("final-cinematic-cut.mp4")
+
+
+def test_cinematic_director_routes_prompt_only_requests_to_prompt_guided(tmp_path, monkeypatch):
+    configure_studio_dirs(tmp_path, monkeypatch)
+    project_id = create_project()
+    seed_task("task-router-prompt")
+    monkeypatch.setattr(cinematic, "ffmpeg_available", lambda: True)
+
+    async def fake_build_shot_assets(task_id, project_id, label, shots, profile_name, use_i2v, quality_preset="premium"):
+        clip_path = studio._output_path(task_id, "prompt-shot.mp4")
+        still_path = studio._output_path(task_id, "prompt-shot.png")
+        touch_file(clip_path)
+        touch_file(still_path)
+        return [
+            {
+                "index": 1,
+                "label": "prompt-shot",
+                "storyboard_url": studio._relative_output_url(still_path),
+                "clip_url": studio._relative_output_url(clip_path),
+                "clip_path": clip_path,
+                "animation_mode": "t2v",
+                "duration_sec": 3.0,
+            }
+        ]
+
+    async def fake_image_guided(*args, **kwargs):
+        raise AssertionError("image-guided path should not be used for prompt-only requests")
+
+    async def fake_synthesize_voice(text, voice, output_path):
+        touch_file(output_path)
+        return studio._relative_output_url(output_path)
+
+    async def fake_music(task_id, prompt, duration_sec, output_name):
+        output_path = studio._output_path(task_id, output_name)
+        touch_file(output_path)
+        return {"path": output_path, "url": studio._relative_output_url(output_path)}
+
+    async def fake_visual(task_id, clip_paths):
+        output_path = studio._output_path(task_id, "visual-sequence.mp4")
+        touch_file(output_path)
+        return {"path": output_path, "url": studio._relative_output_url(output_path), "duration_sec": 12.0}
+
+    async def fake_mix(task_id, narration_path, music_path, music_volume=0.28):
+        output_path = studio._output_path(task_id, "mixed-audio.m4a")
+        touch_file(output_path)
+        return output_path
+
+    async def fake_finalize(task_id, profile_name, visual_path, audio_path):
+        output_path = studio._output_path(task_id, "final-cinematic-cut.mp4")
+        touch_file(output_path)
+        return {"path": output_path, "url": studio._relative_output_url(output_path), "duration_sec": 12.0}
+
+    monkeypatch.setattr(cinematic, "_build_shot_assets", fake_build_shot_assets)
+    monkeypatch.setattr(cinematic, "_build_image_guided_shot_assets", fake_image_guided)
+    monkeypatch.setattr(cinematic, "_synthesize_voice", fake_synthesize_voice)
+    monkeypatch.setattr(cinematic, "_generate_music_track", fake_music)
+    monkeypatch.setattr(cinematic, "_assemble_visual_sequence", fake_visual)
+    monkeypatch.setattr(cinematic, "_mix_or_select_audio", fake_mix)
+    monkeypatch.setattr(cinematic, "_finalize_video", fake_finalize)
+
+    result = asyncio.run(
+        cinematic._run_cinematic_director_task(
+            "task-router-prompt",
+            {
+                "project_id": project_id,
+                "concept": "a city collapses under a broken sun",
+                "production_type": "auto",
+                "duration_sec": 12.0,
+                "scene_count": 4,
+                "use_i2v": False,
+                "label": "cinematic-director",
+            },
+        )
+    )
+
+    assert result["routing_mode"] == "prompt_guided"
+    assert result["production_type"] == "trailer"
+    assert result["shots"][0]["animation_mode"] == "t2v"
+
+
+def test_cinematic_director_routes_image_requests_to_image_guided(tmp_path, monkeypatch):
+    configure_studio_dirs(tmp_path, monkeypatch)
+    project_id = create_project()
+    seed_task("task-router-image")
+    monkeypatch.setattr(cinematic, "ffmpeg_available", lambda: True)
+
+    async def fake_prompt_guided(*args, **kwargs):
+        raise AssertionError("prompt-guided path should not be used when source images are provided")
+
+    async def fake_image_guided(task_id, project_id, label, shots, profile_name, source_image_urls, use_i2v, quality_preset="premium"):
+        clip_path = studio._output_path(task_id, "guided-shot.mp4")
+        still_path = studio._output_path(task_id, "guided-shot.png")
+        touch_file(clip_path)
+        touch_file(still_path)
+        return [
+            {
+                "index": 1,
+                "label": "guided-shot",
+                "storyboard_url": studio._relative_output_url(still_path),
+                "clip_url": studio._relative_output_url(clip_path),
+                "clip_path": clip_path,
+                "animation_mode": "i2v",
+                "duration_sec": 3.0,
+            }
+        ]
+
+    async def fake_synthesize_voice(text, voice, output_path):
+        touch_file(output_path)
+        return studio._relative_output_url(output_path)
+
+    async def fake_music(task_id, prompt, duration_sec, output_name):
+        output_path = studio._output_path(task_id, output_name)
+        touch_file(output_path)
+        return {"path": output_path, "url": studio._relative_output_url(output_path)}
+
+    async def fake_visual(task_id, clip_paths):
+        output_path = studio._output_path(task_id, "visual-sequence.mp4")
+        touch_file(output_path)
+        return {"path": output_path, "url": studio._relative_output_url(output_path), "duration_sec": 12.0}
+
+    async def fake_mix(task_id, narration_path, music_path, music_volume=0.28):
+        output_path = studio._output_path(task_id, "mixed-audio.m4a")
+        touch_file(output_path)
+        return output_path
+
+    async def fake_finalize(task_id, profile_name, visual_path, audio_path):
+        output_path = studio._output_path(task_id, "final-cinematic-cut.mp4")
+        touch_file(output_path)
+        return {"path": output_path, "url": studio._relative_output_url(output_path), "duration_sec": 12.0}
+
+    monkeypatch.setattr(cinematic, "_build_shot_assets", fake_prompt_guided)
+    monkeypatch.setattr(cinematic, "_build_image_guided_shot_assets", fake_image_guided)
+    monkeypatch.setattr(cinematic, "_synthesize_voice", fake_synthesize_voice)
+    monkeypatch.setattr(cinematic, "_generate_music_track", fake_music)
+    monkeypatch.setattr(cinematic, "_assemble_visual_sequence", fake_visual)
+    monkeypatch.setattr(cinematic, "_mix_or_select_audio", fake_mix)
+    monkeypatch.setattr(cinematic, "_finalize_video", fake_finalize)
+
+    result = asyncio.run(
+        cinematic._run_cinematic_director_task(
+            "task-router-image",
+            {
+                "project_id": project_id,
+                "concept": "a kingdom at war in the clouds",
+                "production_type": "auto",
+                "title": "Cloudfall",
+                "source_image_urls": ["http://127.0.0.1:9000/outputs/reference/frame1.png"],
+                "duration_sec": 12.0,
+                "scene_count": 4,
+                "use_i2v": True,
+                "label": "cinematic-director",
+            },
+        )
+    )
+
+    assert result["routing_mode"] == "image_guided"
+    assert result["source_image_count"] == 1
+    assert result["shots"][0]["animation_mode"] == "i2v"
+
+
+def test_series_intro_quality_gate_rejects_hold_fallback(tmp_path, monkeypatch):
+    configure_studio_dirs(tmp_path, monkeypatch)
+    project_id = create_project()
+    seed_task("task-intro-hold")
+    monkeypatch.setattr(cinematic, "ffmpeg_available", lambda: True)
+
+    async def fake_build_shot_assets(task_id, project_id, label, shots, profile_name, use_i2v, quality_preset="premium"):
+        clip_path = studio._output_path(task_id, "scene-1.mp4")
+        still_path = studio._output_path(task_id, "scene-1.png")
+        touch_file(clip_path)
+        touch_file(still_path)
+        return [
+            {
+                "index": 1,
+                "label": "scene-1",
+                "storyboard_url": studio._relative_output_url(still_path),
+                "clip_url": studio._relative_output_url(clip_path),
+                "clip_path": clip_path,
+                "animation_mode": "hold",
+                "duration_sec": 6.0,
+            }
+        ]
+
+    monkeypatch.setattr(cinematic, "_build_shot_assets", fake_build_shot_assets)
+
+    try:
+        asyncio.run(
+            cinematic._run_series_intro_task(
+                "task-intro-hold",
+                {
+                    "project_id": project_id,
+                    "title": "Glass Kingdom",
+                    "concept": "a dynasty unraveling on a floating city",
+                    "label": "series-intro",
+                },
+            )
+        )
+    except RuntimeError as exc:
+        assert "quality floor" in str(exc)
+    else:
+        raise AssertionError("expected the cinematic quality gate to reject hold-only intro output")
