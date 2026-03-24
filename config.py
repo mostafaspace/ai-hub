@@ -55,6 +55,8 @@ VIDEO_GEMMA_ROOT = os.path.join(HF_HOME, "google/gemma-3-12b-it-qat-q4_0-unquant
 VIDEO_DISTILLED_LORA = os.path.join(HF_HOME, "Lightricks/LTX-2.3/ltx-2.3-22b-distilled-lora-384.safetensors")
 VIDEO_DISTILLED_LORA_STRENGTH = 0.6
 VIDEO_SPATIAL_UPSAMPLER = os.path.join(HF_HOME, "Lightricks/LTX-2.3/ltx-2.3-spatial-upscaler-x2-1.1.safetensors")
+VIDEO_ENABLE_DISTILLED_LORA = True
+VIDEO_RETRY_WITHOUT_DISTILLED_LORA_ON_OOM = True
 
 # --- Device Configuration ---
 # Default strategy: "auto" (Accelerate), "cuda", or "cpu"
