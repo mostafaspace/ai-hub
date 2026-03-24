@@ -11,13 +11,26 @@ from pydantic import BaseModel, Field
 
 from orchestrator import studio_api as studio
 from orchestrator.business_media import ffmpeg_available, render_image_hold_clip
-from orchestrator.media_utils import get_media_duration, loop_video_to_duration, mix_audio_files, mux_video_and_audio
+from orchestrator.media_utils import (
+    get_media_duration,
+    loop_audio_to_duration,
+    loop_video_to_duration,
+    mix_audio_files,
+    mux_video_and_audio,
+)
 from orchestrator.studio_media import concat_video_clips, detect_duration, normalize_video_clip, resolve_format_profile
 
 
 cinematic_router = APIRouter(prefix="/v1/studio", tags=["Cinematic Studio"])
 
-DEFAULT_NEGATIVE_PROMPT = "blurry, flicker, low detail, warped anatomy, text artifacts, jitter, watermark"
+DEFAULT_NEGATIVE_PROMPT = (
+    "blurry, flicker, low detail, muddy texture, warped anatomy, deformed faces, extra limbs, "
+    "jitter, watermark, logo, text, letters, words, subtitles, captions, typography, title card, gibberish"
+)
+STORYBOARD_NEGATIVE_PROMPT = (
+    "text, letters, words, subtitles, captions, title card, logo, watermark, poster layout, credits, "
+    "lower thirds, collage, split screen, comic panel, border, frame, blurry, low detail, deformed anatomy"
+)
 
 
 class CinematicTaskBase(BaseModel):
@@ -120,6 +133,52 @@ def _quality_prompt_suffix(preset: str) -> str:
     return "cinematic realism, stable geometry, clean composition"
 
 
+def _merge_negative_prompts(*parts: str) -> str:
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        for raw_token in str(part or "").split(","):
+            token = raw_token.strip()
+            if not token:
+                continue
+            lowered = token.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            tokens.append(token)
+    return ", ".join(tokens)
+
+
+def _storyboard_negative_prompt(shot: CinematicShot) -> str:
+    return _merge_negative_prompts(shot.negative_prompt, DEFAULT_NEGATIVE_PROMPT, STORYBOARD_NEGATIVE_PROMPT)
+
+
+def _video_negative_prompt(shot: CinematicShot) -> str:
+    return _merge_negative_prompts(shot.negative_prompt, DEFAULT_NEGATIVE_PROMPT)
+
+
+def _storyboard_generation_settings(preset: str) -> tuple[int, float]:
+    resolved = _resolve_quality_preset(preset)
+    if resolved == "ultra":
+        return 60, 5.0
+    if resolved == "premium":
+        return 56, 4.5
+    return 50, 4.0
+
+
+def _video_inference_steps(preset: str) -> int:
+    resolved = _resolve_quality_preset(preset)
+    if resolved == "ultra":
+        return 24
+    if resolved == "premium":
+        return 22
+    return 20
+
+
+def _video_should_enhance_prompt(preset: str) -> bool:
+    return _resolve_quality_preset(preset) == "standard"
+
+
 def _effective_series_intro_duration(duration_sec: float) -> float:
     return max(float(duration_sec or 0.0), 45.0)
 
@@ -171,17 +230,18 @@ def _default_intro_shots(req: SeriesIntroRequest) -> list[CinematicShot]:
     target_duration = _effective_series_intro_duration(req.duration_sec)
     shot_duration = max(min(target_duration / max(scene_count, 1), 7.0), 4.5)
     quality_suffix = _quality_prompt_suffix(req.quality_preset)
+    visual_guardrail = "no text, no typography, no logo, no watermark"
     prompts = [
-        f"opening world reveal for {req.title}, {req.concept}, {req.genre}, {req.style_notes}, {quality_suffix}",
-        f"iconic sigil or symbolic artifact from {req.title}, moody close-up, {req.style_notes}, {quality_suffix}",
-        f"hero silhouette in the world of {req.title}, emotionally restrained, {req.style_notes}, {quality_suffix}",
-        f"antagonist or looming threat from {req.title}, oppressive scale, {req.style_notes}, {quality_suffix}",
-        f"ritual, machine, or political ceremony from {req.title}, premium production design, {req.style_notes}, {quality_suffix}",
-        f"intimate character fracture inside {req.title}, emotionally charged, {req.style_notes}, {quality_suffix}",
-        f"catastrophic environmental force overtaking {req.title}, scale and dread, {req.style_notes}, {quality_suffix}",
-        f"power corridor, throne room, or decisive interior from {req.title}, elegant tension, {req.style_notes}, {quality_suffix}",
-        f"dramatic confrontation tableau for {req.title}, prestige TV look, {req.style_notes}, {quality_suffix}",
-        f"title reveal shot for {req.title}, iconic final intro frame, premium prestige television finish, {req.style_notes}, {quality_suffix}",
+        f"opening world reveal for {req.title}, {req.concept}, {req.genre}, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"floating citadel, sacred skyline, or colossal world icon from {req.title}, moody close-up scale, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"iconic sigil, crown relic, or symbolic artifact from {req.title}, elegant macro detail, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"hero silhouette in the world of {req.title}, emotionally restrained, premium wardrobe, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"antagonist or looming threat from {req.title}, oppressive scale and weather, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"ritual, machine, coronation, or political ceremony from {req.title}, premium production design, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"intimate character fracture inside {req.title}, emotionally charged, elegant blocking, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"catastrophic environmental force overtaking {req.title}, sky fleets or stormscale dread, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"dramatic confrontation tableau for {req.title}, prestige television look, sculpted light, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"iconic final symbolic tableau for {req.title}, clean central composition reserved for later title overlay, no typography, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
     ]
     motion_prompts = [
         "slow aerial reveal with layered parallax, weather movement, and cinematic drift",
@@ -213,13 +273,14 @@ def _default_immersive_shots(req: ImmersiveVideoRequest) -> list[CinematicShot]:
     scene_count = max(6, min(req.scene_count, 18))
     shot_duration = max(min(req.duration_sec / max(scene_count, 1), 10.0), 6.0)
     quality_suffix = _quality_prompt_suffix(req.quality_preset)
+    visual_guardrail = "no text, no typography, no logo, no watermark"
     base_prompts = [
-        f"wide establishing atmosphere for {req.concept}, {req.style_notes}, {quality_suffix}",
-        f"dreamlike close environmental detail for {req.concept}, {req.style_notes}, {quality_suffix}",
-        f"slow journey through the world of {req.concept}, {req.style_notes}, {quality_suffix}",
-        f"emotional ambient tableau for {req.concept}, {req.style_notes}, {quality_suffix}",
-        f"moody architectural or natural scale shot for {req.concept}, {req.style_notes}, {quality_suffix}",
-        f"immersive moving light and texture shot for {req.concept}, {req.style_notes}, {quality_suffix}",
+        f"wide establishing atmosphere for {req.concept}, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"dreamlike close environmental detail for {req.concept}, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"slow journey through the world of {req.concept}, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"emotional ambient tableau for {req.concept}, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"moody architectural or natural scale shot for {req.concept}, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"immersive moving light and texture shot for {req.concept}, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
     ]
     shots = []
     for index in range(scene_count):
@@ -240,13 +301,14 @@ def _default_trailer_shots(req: CinematicDirectorRequest) -> list[CinematicShot]
     target_duration = _effective_trailer_duration(req.duration_sec)
     shot_duration = max(min(target_duration / max(scene_count, 1), 5.0), 3.5)
     quality_suffix = _quality_prompt_suffix(req.quality_preset)
+    visual_guardrail = "no text, no typography, no logo, no watermark"
     prompts = [
-        f"opening impact shot for {req.concept}, {req.genre}, {req.style_notes}, {quality_suffix}",
-        f"protagonist reveal for {req.concept}, emotionally charged, {req.style_notes}, {quality_suffix}",
-        f"world-scale danger escalating around {req.concept}, cinematic urgency, {req.style_notes}, {quality_suffix}",
-        f"high energy transition shot for {req.concept}, cinematic momentum, {req.style_notes}, {quality_suffix}",
-        f"confrontation beat for {req.concept}, premium dramatic lighting, {req.style_notes}, {quality_suffix}",
-        f"iconic final reveal for {req.title or req.concept}, trailer ending image, {req.style_notes}, {quality_suffix}",
+        f"opening impact shot for {req.concept}, {req.genre}, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"protagonist reveal for {req.concept}, emotionally charged, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"world-scale danger escalating around {req.concept}, cinematic urgency, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"high energy transition shot for {req.concept}, cinematic momentum, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"confrontation beat for {req.concept}, premium dramatic lighting, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
+        f"iconic final symbolic reveal for {req.title or req.concept}, trailer ending image with clean negative space, {req.style_notes}, {quality_suffix}, {visual_guardrail}",
     ]
     motion_prompts = [
         "camera surges forward with strong parallax and environmental movement",
@@ -405,40 +467,64 @@ async def _synthesize_voice(text: str, voice: str, output_path: str) -> str:
 async def _generate_music_track(task_id: str, prompt: str, duration_sec: float, output_name: str) -> dict[str, Any]:
     music_backend = studio._require_backend("music")
     output_path = studio._output_path(task_id, output_name)
-    async with studio._get_async_lock("music"):
-        async with httpx.AsyncClient(timeout=None) as client:
-            response = await client.post(
-                f"{music_backend}/v1/audio/async_generations",
-                json={
-                    "prompt": prompt,
-                    "audio_duration": max(float(duration_sec or 0.0), 8.0),
-                    "audio_format": os.path.splitext(output_name)[1].lstrip(".") or "mp3",
-                },
-            )
-            response.raise_for_status()
-            init_data = response.json() or {}
-            remote_task_id = init_data.get("task_id")
-            if not remote_task_id:
-                raise RuntimeError(f"Music backend did not return task_id: {init_data}")
-            status_data = await studio._poll_task_url(client, f"{music_backend}/v1/audio/tasks/{remote_task_id}")
-            data_items = status_data.get("data") or []
-            if not data_items:
-                raise RuntimeError(f"Music task completed without output data: {status_data}")
-            source_url = studio._resolve_remote_url(data_items[0].get("url", ""), music_backend)
-            await studio._download_to_path(source_url, output_path)
-    return {"path": output_path, "url": studio._relative_output_url(output_path)}
+    last_error: Optional[Exception] = None
+    for attempt in range(1, 4):
+        try:
+            async with studio._get_async_lock("music"):
+                async with httpx.AsyncClient(timeout=None) as client:
+                    response = await client.post(
+                        f"{music_backend}/v1/audio/async_generations",
+                        json={
+                            "prompt": prompt,
+                            "audio_duration": max(float(duration_sec or 0.0), 8.0),
+                            "audio_format": os.path.splitext(output_name)[1].lstrip(".") or "mp3",
+                        },
+                    )
+                    response.raise_for_status()
+                    init_data = response.json() or {}
+                    remote_task_id = init_data.get("task_id")
+                    if not remote_task_id:
+                        raise RuntimeError(f"Music backend did not return task_id: {init_data}")
+                    status_data = await studio._poll_task_url(client, f"{music_backend}/v1/audio/tasks/{remote_task_id}")
+                    data_items = status_data.get("data") or []
+                    if not data_items:
+                        raise RuntimeError(f"Music task completed without output data: {status_data}")
+                    source_url = studio._resolve_remote_url(data_items[0].get("url", ""), music_backend)
+                    await studio._download_to_path(source_url, output_path)
+            return {"path": output_path, "url": studio._relative_output_url(output_path)}
+        except httpx.HTTPError as exc:
+            last_error = exc
+            if attempt >= 3:
+                break
+            await asyncio.sleep(float(attempt))
+    raise RuntimeError(f"Music backend request failed after retries: {last_error}")
 
 
-async def _generate_storyboard_image(task_id: str, shot: CinematicShot, index: int, profile_name: str) -> dict[str, Any]:
+async def _generate_storyboard_image(
+    task_id: str,
+    shot: CinematicShot,
+    index: int,
+    profile_name: str,
+    quality_preset: str = "premium",
+) -> dict[str, Any]:
     vision_backend = studio._require_backend("vision")
     _, _, size = _generation_dimensions(profile_name)
     slug = _shot_slug(shot, index)
     output_path = studio._output_path(task_id, f"{slug}.png")
+    negative_prompt = _storyboard_negative_prompt(shot)
+    inference_steps, guidance_scale = _storyboard_generation_settings(quality_preset)
     async with studio._get_async_lock("vision"):
         async with httpx.AsyncClient(timeout=None) as client:
             response = await client.post(
                 f"{vision_backend}/v1/images/async_generate",
-                json={"prompt": shot.image_prompt, "size": size, "cfg_normalization": True},
+                json={
+                    "prompt": shot.image_prompt,
+                    "negative_prompt": negative_prompt,
+                    "size": size,
+                    "num_inference_steps": inference_steps,
+                    "guidance_scale": guidance_scale,
+                    "cfg_normalization": True,
+                },
             )
             response.raise_for_status()
             init_data = response.json() or {}
@@ -470,8 +556,14 @@ async def _generate_i2v_clip(
     slug = _shot_slug(shot, index)
     raw_path = studio._output_path(task_id, f"{slug}-raw.mp4")
     working_path = raw_path
-    prompt = shot.motion_prompt.strip() or f"{shot.image_prompt}, slow cinematic camera motion"
-    negative_prompt = shot.negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT
+    prompt_parts = [
+        shot.motion_prompt.strip() or "slow cinematic camera motion",
+        "preserve subject identity, preserve setting, preserve costume and production design, physically plausible motion",
+    ]
+    prompt = ", ".join(part for part in prompt_parts if part)
+    negative_prompt = _video_negative_prompt(shot)
+    inference_steps = _video_inference_steps(quality_preset)
+    enhance_prompt = "true" if _video_should_enhance_prompt(quality_preset) else "false"
 
     async with studio._get_async_lock("video"):
         async with httpx.AsyncClient(timeout=None) as client:
@@ -484,10 +576,10 @@ async def _generate_i2v_clip(
                         "width": str(width),
                         "num_frames": str(_clip_frame_count(target_duration, fps)),
                         "frame_rate": str(fps),
-                        "num_inference_steps": "20",
+                        "num_inference_steps": str(inference_steps),
                         "seed": "-1",
                         "negative_prompt": negative_prompt,
-                        "enhance_prompt": "true",
+                        "enhance_prompt": enhance_prompt,
                     },
                     files={"image": (os.path.basename(image_path), image_handle, "image/png")},
                 )
@@ -545,7 +637,9 @@ async def _generate_t2v_clip(
         "prestige television shot, cinematic realism, physically plausible motion, crisp details, stable geometry, no slideshow feel",
     ]
     prompt = ", ".join(part for part in prompt_parts if part)
-    negative_prompt = shot.negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT
+    negative_prompt = _video_negative_prompt(shot)
+    inference_steps = _video_inference_steps(quality_preset)
+    enhance_prompt = _video_should_enhance_prompt(quality_preset)
 
     async with studio._get_async_lock("video"):
         async with httpx.AsyncClient(timeout=None) as client:
@@ -557,10 +651,10 @@ async def _generate_t2v_clip(
                     "width": width,
                     "num_frames": _clip_frame_count(target_duration, fps),
                     "frame_rate": fps,
-                    "num_inference_steps": 20,
+                    "num_inference_steps": inference_steps,
                     "seed": -1,
                     "negative_prompt": negative_prompt,
-                    "enhance_prompt": True,
+                    "enhance_prompt": enhance_prompt,
                 },
             )
             response.raise_for_status()
@@ -696,7 +790,7 @@ async def _build_shot_assets(
     rendered_shots = []
     for index, shot in enumerate(shots, start=1):
         studio._raise_if_cancel_requested(task_id)
-        storyboard = await _generate_storyboard_image(task_id, shot, index, profile_name)
+        storyboard = await _generate_storyboard_image(task_id, shot, index, profile_name, quality_preset)
         studio._attach_asset(
             project_id,
             "image",
@@ -994,10 +1088,11 @@ async def _mix_or_select_audio(
 
 async def _finalize_video(task_id: str, profile_name: str, visual_path: str, audio_path: Optional[str]) -> dict[str, Any]:
     final_visual_path = visual_path
+    final_audio_path = audio_path
     visual_duration = await asyncio.to_thread(detect_duration, visual_path)
     audio_duration = 0.0
-    if audio_path:
-        audio_duration = await asyncio.to_thread(get_media_duration, audio_path)
+    if final_audio_path:
+        audio_duration = await asyncio.to_thread(get_media_duration, final_audio_path)
         if audio_duration > visual_duration + 0.35:
             looped_path = studio._output_path(task_id, "visual-sequence-looped.mp4")
             success = await asyncio.to_thread(loop_video_to_duration, visual_path, audio_duration, looped_path)
@@ -1016,10 +1111,17 @@ async def _finalize_video(task_id: str, profile_name: str, visual_path: str, aud
                 raise RuntimeError(f"Failed to normalize the extended visual sequence: {message}")
             final_visual_path = normalized_path
             visual_duration = audio_duration
+        elif audio_duration + 0.35 < visual_duration:
+            looped_audio_path = studio._output_path(task_id, "final-audio-looped.m4a")
+            success = await asyncio.to_thread(loop_audio_to_duration, final_audio_path, visual_duration, looped_audio_path)
+            if not success:
+                raise RuntimeError("Failed to extend the soundtrack to the visual sequence length.")
+            final_audio_path = looped_audio_path
+            audio_duration = visual_duration
 
     final_output_path = studio._output_path(task_id, "final-cinematic-cut.mp4")
-    if audio_path:
-        success = await asyncio.to_thread(mux_video_and_audio, final_visual_path, audio_path, final_output_path)
+    if final_audio_path:
+        success = await asyncio.to_thread(mux_video_and_audio, final_visual_path, final_audio_path, final_output_path)
         if not success:
             raise RuntimeError("Failed to mux the final cinematic cut.")
     else:

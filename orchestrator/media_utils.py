@@ -71,14 +71,42 @@ def loop_video_to_duration(video_path: str, target_duration: float, output_path:
         print(f"[Error] Failed to loop video: {e}")
         return False
 
+
+def loop_audio_to_duration(audio_path: str, target_duration: float, output_path: str) -> bool:
+    """Loops audio to reach target_duration using stream_loop."""
+    ffmpeg_cmd = get_ffmpeg_cmd()
+    if not ffmpeg_cmd:
+        return False
+
+    cmd = [
+        ffmpeg_cmd,
+        "-stream_loop", "-1",
+        "-i", audio_path,
+        "-t", str(target_duration),
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-y",
+        output_path,
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, check=True)
+        return True
+    except Exception as e:
+        print(f"[Error] Failed to loop audio: {e}")
+        return False
+
 def mix_audio_files(voice_path: str, music_path: str, output_path: str, music_volume: float = 0.2) -> bool:
     """Mixes voiceover and music with volume adjustment."""
     ffmpeg_cmd = get_ffmpeg_cmd()
     if not ffmpeg_cmd: return False
     
     # [0:a] is voice, [1:a] is music
-    # amix duration=first means finish when the first stream (voice) ends
-    filter_complex = f"[0:a]volume=1.2[v];[1:a]volume={music_volume}[m];[v][m]amix=inputs=2:duration=first[a]"
+    # Use duration=longest so short narration doesn't truncate the score bed.
+    filter_complex = (
+        f"[0:a]volume=1.2[v];"
+        f"[1:a]volume={music_volume}[m];"
+        "[v][m]amix=inputs=2:duration=longest:dropout_transition=2[a]"
+    )
     cmd = [
         ffmpeg_cmd,
         "-i", voice_path,
