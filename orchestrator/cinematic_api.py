@@ -18,7 +18,14 @@ from orchestrator.media_utils import (
     mix_audio_files,
     mux_video_and_audio,
 )
-from orchestrator.studio_media import concat_video_clips, detect_duration, normalize_video_clip, resolve_format_profile
+from orchestrator.studio_media import (
+    concat_video_clips,
+    detect_duration,
+    enhance_image_with_super_resolution,
+    normalize_video_clip,
+    polish_cinematic_clip,
+    resolve_format_profile,
+)
 
 
 cinematic_router = APIRouter(prefix="/v1/studio", tags=["Cinematic Studio"])
@@ -179,14 +186,18 @@ def _video_should_enhance_prompt(preset: str) -> bool:
     return _resolve_quality_preset(preset) == "standard"
 
 
+def _should_enhance_i2v_source(preset: str) -> bool:
+    return _resolve_quality_preset(preset) in {"premium", "ultra"}
+
+
 def _effective_series_intro_duration(duration_sec: float) -> float:
     return max(float(duration_sec or 0.0), 45.0)
 
 
 def _effective_series_intro_scene_count(scene_count: int, duration_sec: float) -> int:
     duration_target = _effective_series_intro_duration(duration_sec)
-    recommended = int(math.ceil(duration_target / 6.0))
-    return max(8, min(max(scene_count, recommended), 12))
+    recommended = int(math.ceil(duration_target / 5.0))
+    return max(10, min(max(scene_count, recommended), 12))
 
 
 def _effective_trailer_duration(duration_sec: float) -> float:
@@ -195,8 +206,8 @@ def _effective_trailer_duration(duration_sec: float) -> float:
 
 def _effective_trailer_scene_count(scene_count: int, duration_sec: float) -> int:
     duration_target = _effective_trailer_duration(duration_sec)
-    recommended = int(math.ceil(duration_target / 4.5))
-    return max(6, min(max(scene_count, recommended), 10))
+    recommended = int(math.ceil(duration_target / 4.0))
+    return max(8, min(max(scene_count, recommended), 12))
 
 
 def _should_enforce_motion_quality(production_type: str, preset: str) -> bool:
@@ -228,7 +239,7 @@ def _default_trailer_music(req: CinematicDirectorRequest) -> str:
 def _default_intro_shots(req: SeriesIntroRequest) -> list[CinematicShot]:
     scene_count = _effective_series_intro_scene_count(req.scene_count, req.duration_sec)
     target_duration = _effective_series_intro_duration(req.duration_sec)
-    shot_duration = max(min(target_duration / max(scene_count, 1), 7.0), 4.5)
+    shot_duration = max(min(target_duration / max(scene_count, 1), 5.0), 4.0)
     quality_suffix = _quality_prompt_suffix(req.quality_preset)
     visual_guardrail = "no text, no typography, no logo, no watermark"
     prompts = [
@@ -299,7 +310,7 @@ def _default_immersive_shots(req: ImmersiveVideoRequest) -> list[CinematicShot]:
 def _default_trailer_shots(req: CinematicDirectorRequest) -> list[CinematicShot]:
     scene_count = _effective_trailer_scene_count(req.scene_count, req.duration_sec)
     target_duration = _effective_trailer_duration(req.duration_sec)
-    shot_duration = max(min(target_duration / max(scene_count, 1), 5.0), 3.5)
+    shot_duration = max(min(target_duration / max(scene_count, 1), 4.5), 3.0)
     quality_suffix = _quality_prompt_suffix(req.quality_preset)
     visual_guardrail = "no text, no typography, no logo, no watermark"
     prompts = [
@@ -331,11 +342,10 @@ def _default_trailer_shots(req: CinematicDirectorRequest) -> list[CinematicShot]
     return shots
 
 
-def _generation_dimensions(profile_name: str) -> tuple[int, int, str]:
+def _generation_dimensions(profile_name: str, max_dim: int = 1536) -> tuple[int, int, str]:
     profile = resolve_format_profile(profile_name)
     width = float(profile["width"])
     height = float(profile["height"])
-    max_dim = 1536
     if max(width, height) > max_dim:
         scale = max_dim / max(width, height)
         width = width * scale
@@ -365,32 +375,46 @@ def _generation_dimensions(profile_name: str) -> tuple[int, int, str]:
     return final_width, final_height, f"{final_width}x{final_height}"
 
 
-def _video_generation_dimensions(profile_name: str, quality_preset: str = "premium") -> tuple[int, int]:
-    width, height, _ = _generation_dimensions(profile_name)
+def _video_generation_candidates(profile_name: str, quality_preset: str = "premium") -> list[tuple[int, int]]:
     resolved_preset = _resolve_quality_preset(quality_preset)
-    max_dim = 1024
+    max_dims = [1024]
     if resolved_preset == "premium":
-        max_dim = 1088
+        max_dims = [1280, 1152, 1024]
     elif resolved_preset == "ultra":
-        max_dim = 1152
-    if max(width, height) <= max_dim:
-        return width, height
+        max_dims = [1536, 1280, 1152, 1024]
 
-    scale = max_dim / float(max(width, height))
-    scaled_width = width * scale
-    scaled_height = height * scale
-    final_width = max(512, int(scaled_width // 64) * 64)
-    final_height = max(512, int(scaled_height // 64) * 64)
-    return final_width, final_height
+    candidates: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+    for max_dim in max_dims:
+        width, height, _ = _generation_dimensions(profile_name, max_dim=max_dim)
+        candidate = (width, height)
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        candidates.append(candidate)
+    return candidates
 
 
-def _clip_frame_count(duration_sec: float, fps: float) -> int:
-    clip_seconds = max(min(float(duration_sec or 0.0), 3.0), 2.0)
+def _video_generation_dimensions(profile_name: str, quality_preset: str = "premium") -> tuple[int, int]:
+    return _video_generation_candidates(profile_name, quality_preset)[0]
+
+
+def _motion_budget_seconds(quality_preset: str) -> float:
+    resolved = _resolve_quality_preset(quality_preset)
+    if resolved == "ultra":
+        return 5.5
+    if resolved == "premium":
+        return 5.0
+    return 4.0
+
+
+def _clip_frame_count(duration_sec: float, fps: float, quality_preset: str = "premium") -> int:
+    clip_seconds = max(min(float(duration_sec or 0.0), _motion_budget_seconds(quality_preset)), 2.0)
     frames = int(round(clip_seconds * max(float(fps or 24.0), 12.0))) + 1
-    return max(49, min(frames, 73))
+    return max(49, min(frames, 121))
 
 
-def _clip_duration(duration_sec: float, fallback: float = 6.0) -> float:
+def _clip_duration(duration_sec: float, fallback: float = 4.0) -> float:
     return max(float(duration_sec or 0.0), fallback)
 
 
@@ -404,6 +428,46 @@ def _shot_spec_payload(shots: list[CinematicShot]) -> list[dict[str, Any]]:
 
 def _total_shot_duration(shots: list[CinematicShot]) -> float:
     return sum(_clip_duration(shot.duration_sec) for shot in shots)
+
+
+def _segment_motion_suffix(segment_index: int, total_segments: int) -> str:
+    if total_segments <= 1:
+        return ""
+    variants = [
+        "opening beat of the shot",
+        "continuation beat with a fresh camera pass",
+        "closer continuation beat with refined detail",
+        "final settling beat",
+    ]
+    return variants[min(segment_index, len(variants) - 1)]
+
+
+def _expand_shots_for_motion_budget(shots: list[CinematicShot], quality_preset: str) -> list[CinematicShot]:
+    max_duration = _motion_budget_seconds(quality_preset)
+    expanded: list[CinematicShot] = []
+    for shot in shots:
+        requested_duration = _clip_duration(shot.duration_sec)
+        if requested_duration <= max_duration + 0.25:
+            expanded.append(shot)
+            continue
+        segment_count = max(2, int(math.ceil(requested_duration / max_duration)))
+        segment_duration = requested_duration / float(segment_count)
+        for segment_index in range(segment_count):
+            suffix = chr(ord("a") + segment_index)
+            motion_bits = [shot.motion_prompt.strip()]
+            motion_suffix = _segment_motion_suffix(segment_index, segment_count)
+            if motion_suffix:
+                motion_bits.append(motion_suffix)
+            expanded.append(
+                CinematicShot(
+                    label=f"{shot.label or 'shot'}-{suffix}",
+                    image_prompt=shot.image_prompt,
+                    motion_prompt=", ".join(part for part in motion_bits if part),
+                    negative_prompt=shot.negative_prompt,
+                    duration_sec=segment_duration,
+                )
+            )
+    return expanded
 
 
 def _resolve_production_type(req: CinematicDirectorRequest) -> str:
@@ -550,12 +614,14 @@ async def _generate_i2v_clip(
 ) -> dict[str, Any]:
     video_backend = studio._require_backend("video")
     profile = resolve_format_profile(profile_name)
-    width, height = _video_generation_dimensions(profile_name, quality_preset)
+    resolution_candidates = _video_generation_candidates(profile_name, quality_preset)
     fps = float(profile["fps"])
     target_duration = _clip_duration(shot.duration_sec)
+    motion_budget = _motion_budget_seconds(quality_preset)
     slug = _shot_slug(shot, index)
     raw_path = studio._output_path(task_id, f"{slug}-raw.mp4")
     working_path = raw_path
+    used_width, used_height = resolution_candidates[0]
     prompt_parts = [
         shot.motion_prompt.strip() or "slow cinematic camera motion",
         "preserve subject identity, preserve setting, preserve costume and production design, physically plausible motion",
@@ -564,56 +630,102 @@ async def _generate_i2v_clip(
     negative_prompt = _video_negative_prompt(shot)
     inference_steps = _video_inference_steps(quality_preset)
     enhance_prompt = "true" if _video_should_enhance_prompt(quality_preset) else "false"
+    conditioning_image_path = image_path
+    if _should_enhance_i2v_source(quality_preset):
+        enhanced_image_path = studio._output_path(task_id, f"{slug}-conditioning.png")
+        success, message = await asyncio.to_thread(
+            enhance_image_with_super_resolution,
+            image_path,
+            enhanced_image_path,
+            0.42,
+        )
+        if success:
+            conditioning_image_path = enhanced_image_path
+            studio._record_task_event(task_id, f"Enhanced source detail for {slug}.", f"{slug}-conditioning")
+        else:
+            studio._record_task_event(
+                task_id,
+                f"Source enhancement skipped for {slug}: {message}",
+                f"{slug}-conditioning-skip",
+            )
 
     async with studio._get_async_lock("video"):
         async with httpx.AsyncClient(timeout=None) as client:
-            with open(image_path, "rb") as image_handle:
-                response = await client.post(
-                    f"{video_backend}/v1/video/async_i2v",
-                    data={
-                        "prompt": prompt,
-                        "height": str(height),
-                        "width": str(width),
-                        "num_frames": str(_clip_frame_count(target_duration, fps)),
-                        "frame_rate": str(fps),
-                        "num_inference_steps": str(inference_steps),
-                        "seed": "-1",
-                        "negative_prompt": negative_prompt,
-                        "enhance_prompt": enhance_prompt,
-                    },
-                    files={"image": (os.path.basename(image_path), image_handle, "image/png")},
-                )
-            response.raise_for_status()
-            init_data = response.json() or {}
-            remote_task_id = init_data.get("task_id")
-            if not remote_task_id:
-                raise RuntimeError(f"Video backend did not return task_id: {init_data}")
-            status_data = await studio._poll_task_url(client, f"{video_backend}/v1/video/tasks/{remote_task_id}")
-            source_url = studio._resolve_remote_url(status_data.get("url", ""), video_backend)
-            if not source_url:
-                raise RuntimeError(f"Video task completed without output url: {status_data}")
-            await studio._download_to_path(source_url, raw_path)
+            last_error: Optional[Exception] = None
+            for attempt_index, (width, height) in enumerate(resolution_candidates, start=1):
+                try:
+                    with open(conditioning_image_path, "rb") as image_handle:
+                        response = await client.post(
+                            f"{video_backend}/v1/video/async_i2v",
+                            data={
+                                "prompt": prompt,
+                                "height": str(height),
+                                "width": str(width),
+                                "num_frames": str(_clip_frame_count(target_duration, fps, quality_preset)),
+                                "frame_rate": str(fps),
+                                "num_inference_steps": str(inference_steps),
+                                "seed": "-1",
+                                "negative_prompt": negative_prompt,
+                                "enhance_prompt": enhance_prompt,
+                            },
+                            files={"image": (os.path.basename(conditioning_image_path), image_handle, "image/png")},
+                        )
+                    response.raise_for_status()
+                    init_data = response.json() or {}
+                    remote_task_id = init_data.get("task_id")
+                    if not remote_task_id:
+                        raise RuntimeError(f"Video backend did not return task_id: {init_data}")
+                    status_data = await studio._poll_task_url(client, f"{video_backend}/v1/video/tasks/{remote_task_id}")
+                    source_url = studio._resolve_remote_url(status_data.get("url", ""), video_backend)
+                    if not source_url:
+                        raise RuntimeError(f"Video task completed without output url: {status_data}")
+                    if os.path.exists(raw_path):
+                        os.remove(raw_path)
+                    await studio._download_to_path(source_url, raw_path)
+                    used_width, used_height = width, height
+                    last_error = None
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    if attempt_index >= len(resolution_candidates):
+                        raise
+                    studio._record_task_event(
+                        task_id,
+                        f"Retrying {slug} at a lower video resolution after {width}x{height} failed: {exc}",
+                        f"{slug}-resolution-retry-{attempt_index}",
+                    )
+            if last_error is not None:
+                raise RuntimeError(f"Video generation failed for {slug}: {last_error}")
 
     raw_duration = await asyncio.to_thread(detect_duration, raw_path)
-    if target_duration > (raw_duration or 0.0) + 0.35:
+    final_duration = target_duration
+    if target_duration > (raw_duration or 0.0) + 0.35 and target_duration > motion_budget + 0.35:
         looped_path = studio._output_path(task_id, f"{slug}-looped.mp4")
         success = await asyncio.to_thread(loop_video_to_duration, raw_path, target_duration, looped_path)
         if not success:
             raise RuntimeError(f"Failed to extend shot {slug} to the requested duration.")
         working_path = looped_path
+    elif raw_duration:
+        final_duration = min(target_duration, raw_duration)
 
     output_path = studio._output_path(task_id, f"{slug}.mp4")
     success, message = await asyncio.to_thread(
-        normalize_video_clip,
+        polish_cinematic_clip,
         working_path,
         output_path,
         profile_name,
         0.0,
-        target_duration,
+        final_duration,
     )
     if not success:
-        raise RuntimeError(f"Failed to normalize animated shot {slug}: {message}")
-    return {"path": output_path, "url": studio._relative_output_url(output_path), "mode": "i2v"}
+        raise RuntimeError(f"Failed to polish animated shot {slug}: {message}")
+    return {
+        "path": output_path,
+        "url": studio._relative_output_url(output_path),
+        "mode": "i2v",
+        "duration_sec": final_duration,
+        "generation_resolution": f"{used_width}x{used_height}",
+    }
 
 
 async def _generate_t2v_clip(
@@ -625,12 +737,14 @@ async def _generate_t2v_clip(
 ) -> dict[str, Any]:
     video_backend = studio._require_backend("video")
     profile = resolve_format_profile(profile_name)
-    width, height = _video_generation_dimensions(profile_name, quality_preset)
+    resolution_candidates = _video_generation_candidates(profile_name, quality_preset)
     fps = float(profile["fps"])
     target_duration = _clip_duration(shot.duration_sec)
+    motion_budget = _motion_budget_seconds(quality_preset)
     slug = _shot_slug(shot, index)
     raw_path = studio._output_path(task_id, f"{slug}-t2v-raw.mp4")
     working_path = raw_path
+    used_width, used_height = resolution_candidates[0]
     prompt_parts = [
         shot.image_prompt.strip(),
         shot.motion_prompt.strip() or "cinematic motion, clear subject movement, strong sense of depth",
@@ -643,51 +757,79 @@ async def _generate_t2v_clip(
 
     async with studio._get_async_lock("video"):
         async with httpx.AsyncClient(timeout=None) as client:
-            response = await client.post(
-                f"{video_backend}/v1/video/async_t2v",
-                json={
-                    "prompt": prompt,
-                    "height": height,
-                    "width": width,
-                    "num_frames": _clip_frame_count(target_duration, fps),
-                    "frame_rate": fps,
-                    "num_inference_steps": inference_steps,
-                    "seed": -1,
-                    "negative_prompt": negative_prompt,
-                    "enhance_prompt": enhance_prompt,
-                },
-            )
-            response.raise_for_status()
-            init_data = response.json() or {}
-            remote_task_id = init_data.get("task_id")
-            if not remote_task_id:
-                raise RuntimeError(f"Video backend did not return task_id: {init_data}")
-            status_data = await studio._poll_task_url(client, f"{video_backend}/v1/video/tasks/{remote_task_id}")
-            source_url = studio._resolve_remote_url(status_data.get("url", ""), video_backend)
-            if not source_url:
-                raise RuntimeError(f"Video task completed without output url: {status_data}")
-            await studio._download_to_path(source_url, raw_path)
+            last_error: Optional[Exception] = None
+            for attempt_index, (width, height) in enumerate(resolution_candidates, start=1):
+                try:
+                    response = await client.post(
+                        f"{video_backend}/v1/video/async_t2v",
+                        json={
+                            "prompt": prompt,
+                            "height": height,
+                            "width": width,
+                            "num_frames": _clip_frame_count(target_duration, fps, quality_preset),
+                            "frame_rate": fps,
+                            "num_inference_steps": inference_steps,
+                            "seed": -1,
+                            "negative_prompt": negative_prompt,
+                            "enhance_prompt": enhance_prompt,
+                        },
+                    )
+                    response.raise_for_status()
+                    init_data = response.json() or {}
+                    remote_task_id = init_data.get("task_id")
+                    if not remote_task_id:
+                        raise RuntimeError(f"Video backend did not return task_id: {init_data}")
+                    status_data = await studio._poll_task_url(client, f"{video_backend}/v1/video/tasks/{remote_task_id}")
+                    source_url = studio._resolve_remote_url(status_data.get("url", ""), video_backend)
+                    if not source_url:
+                        raise RuntimeError(f"Video task completed without output url: {status_data}")
+                    if os.path.exists(raw_path):
+                        os.remove(raw_path)
+                    await studio._download_to_path(source_url, raw_path)
+                    used_width, used_height = width, height
+                    last_error = None
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    if attempt_index >= len(resolution_candidates):
+                        raise
+                    studio._record_task_event(
+                        task_id,
+                        f"Retrying {slug} at a lower video resolution after {width}x{height} failed: {exc}",
+                        f"{slug}-resolution-retry-{attempt_index}",
+                    )
+            if last_error is not None:
+                raise RuntimeError(f"Video generation failed for {slug}: {last_error}")
 
     raw_duration = await asyncio.to_thread(detect_duration, raw_path)
-    if target_duration > (raw_duration or 0.0) + 0.35:
+    final_duration = target_duration
+    if target_duration > (raw_duration or 0.0) + 0.35 and target_duration > motion_budget + 0.35:
         looped_path = studio._output_path(task_id, f"{slug}-t2v-looped.mp4")
         success = await asyncio.to_thread(loop_video_to_duration, raw_path, target_duration, looped_path)
         if not success:
             raise RuntimeError(f"Failed to extend generated shot {slug} to the requested duration.")
         working_path = looped_path
+    elif raw_duration:
+        final_duration = min(target_duration, raw_duration)
 
     output_path = studio._output_path(task_id, f"{slug}.mp4")
     success, message = await asyncio.to_thread(
-        normalize_video_clip,
+        polish_cinematic_clip,
         working_path,
         output_path,
         profile_name,
         0.0,
-        target_duration,
+        final_duration,
     )
     if not success:
-        raise RuntimeError(f"Failed to normalize generated shot {slug}: {message}")
-    return {"path": output_path, "url": studio._relative_output_url(output_path), "mode": "t2v"}
+        raise RuntimeError(f"Failed to polish generated shot {slug}: {message}")
+    return {
+        "path": output_path,
+        "url": studio._relative_output_url(output_path),
+        "mode": "t2v",
+        "duration_sec": final_duration,
+        "generation_resolution": f"{used_width}x{used_height}",
+    }
 
 
 async def _render_hold_clip(task_id: str, shot: CinematicShot, index: int, image_path: str, profile_name: str) -> dict[str, Any]:
@@ -756,7 +898,7 @@ async def _build_image_guided_shot_assets(
             {
                 "shot_index": index,
                 "animation_mode": clip["mode"],
-                "duration_sec": _clip_duration(shot.duration_sec),
+                "duration_sec": float(clip.get("duration_sec", _clip_duration(shot.duration_sec))),
                 "prompt": shot.image_prompt,
                 "source_url": source_url,
             },
@@ -768,7 +910,7 @@ async def _build_image_guided_shot_assets(
                 "label": shot.label or f"shot-{index}",
                 "image_prompt": shot.image_prompt,
                 "motion_prompt": shot.motion_prompt,
-                "duration_sec": _clip_duration(shot.duration_sec),
+                "duration_sec": float(clip.get("duration_sec", _clip_duration(shot.duration_sec))),
                 "storyboard_url": storyboard_url,
                 "clip_url": clip["url"],
                 "clip_path": clip["path"],
@@ -830,7 +972,7 @@ async def _build_shot_assets(
             {
                 "shot_index": index,
                 "animation_mode": clip["mode"],
-                "duration_sec": _clip_duration(shot.duration_sec),
+                "duration_sec": float(clip.get("duration_sec", _clip_duration(shot.duration_sec))),
                 "prompt": shot.image_prompt,
             },
         )
@@ -841,7 +983,7 @@ async def _build_shot_assets(
                 "label": shot.label or f"shot-{index}",
                 "image_prompt": shot.image_prompt,
                 "motion_prompt": shot.motion_prompt,
-                "duration_sec": _clip_duration(shot.duration_sec),
+                "duration_sec": float(clip.get("duration_sec", _clip_duration(shot.duration_sec))),
                 "storyboard_url": storyboard["url"],
                 "clip_url": clip["url"],
                 "clip_path": clip["path"],
@@ -921,6 +1063,8 @@ async def _run_cinematic_director_task(task_id: str, spec: dict[str, Any]) -> di
             )
         else:
             shots = _default_trailer_shots(req)
+    if production_type in {"series_intro", "trailer"}:
+        shots = _expand_shots_for_motion_budget(shots, req.quality_preset)
 
     include_narration = production_type in {"series_intro", "trailer"}
     title = (req.title or req.concept[:48]).strip() or "Untitled"
@@ -1143,6 +1287,7 @@ async def _run_series_intro_task(task_id: str, spec: dict[str, Any]) -> dict[str
         raise RuntimeError("FFmpeg is required for cinematic assembly.")
 
     shots = req.shot_plan or _default_intro_shots(req)
+    shots = _expand_shots_for_motion_budget(shots, req.quality_preset)
     narration_text = (req.narration_text or _default_intro_narration(req)).strip()
     music_prompt = (req.music_prompt or _default_intro_music(req)).strip()
     plan_url = await _write_plan_asset(

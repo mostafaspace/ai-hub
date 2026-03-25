@@ -3,11 +3,15 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 from typing import Iterable, Optional
 
 
 BIN_DIR = os.path.join(os.path.dirname(__file__), "bin")
 FFMPEG_EXE = os.path.join(BIN_DIR, "ffmpeg.exe")
+_IMAGE_SR_PIPELINE = None
+_IMAGE_SR_ERROR: Optional[str] = None
+_IMAGE_SR_LOCK = threading.Lock()
 
 FORMAT_PROFILES = {
     "youtube_short": {
@@ -269,6 +273,118 @@ def normalize_video_clip(
         ]
     )
     return _run_ffmpeg(args)
+
+
+def polish_cinematic_clip(
+    input_path: str,
+    output_path: str,
+    profile_name: str,
+    trim_in_sec: float = 0.0,
+    duration_sec: Optional[float] = None,
+    denoise_strength: float = 0.35,
+    sharpen_strength: float = 0.75,
+) -> tuple[bool, str]:
+    profile = resolve_format_profile(profile_name)
+    if profile["kind"] != "video":
+        return False, f"Profile {profile_name} is not a video profile."
+
+    args = ["-y"]
+    if trim_in_sec and trim_in_sec > 0:
+        args.extend(["-ss", f"{trim_in_sec:.3f}"])
+    args.extend(["-i", input_path])
+    if duration_sec and duration_sec > 0:
+        args.extend(["-t", f"{duration_sec:.3f}"])
+
+    denoise = max(float(denoise_strength), 0.0)
+    sharpen = max(float(sharpen_strength), 0.0)
+    filter_value = (
+        f"scale={profile['width']}:{profile['height']}:flags=lanczos:force_original_aspect_ratio=decrease,"
+        f"pad={profile['width']}:{profile['height']}:(ow-iw)/2:(oh-ih)/2,"
+        f"fps={profile['fps']},"
+        f"hqdn3d={denoise:.2f}:{denoise:.2f}:3:3,"
+        f"unsharp=5:5:{sharpen:.2f}:3:3:0.00,"
+        "setsar=1"
+    )
+    args.extend(
+        [
+            "-vf",
+            filter_value,
+            "-an",
+            "-c:v",
+            profile["video_codec"],
+            "-b:v",
+            profile["video_bitrate"],
+            "-pix_fmt",
+            "yuv420p",
+            output_path,
+        ]
+    )
+    return _run_ffmpeg(args)
+
+
+def _load_image_super_resolution_pipeline():
+    global _IMAGE_SR_PIPELINE, _IMAGE_SR_ERROR
+    if _IMAGE_SR_PIPELINE is not None:
+        return _IMAGE_SR_PIPELINE
+    if _IMAGE_SR_ERROR is not None:
+        raise RuntimeError(_IMAGE_SR_ERROR)
+
+    with _IMAGE_SR_LOCK:
+        if _IMAGE_SR_PIPELINE is not None:
+            return _IMAGE_SR_PIPELINE
+        if _IMAGE_SR_ERROR is not None:
+            raise RuntimeError(_IMAGE_SR_ERROR)
+        try:
+            from modelscope.pipelines import pipeline
+            from modelscope.utils.constant import Tasks
+        except Exception as exc:
+            _IMAGE_SR_ERROR = f"Image super-resolution dependencies are unavailable: {exc}"
+            raise RuntimeError(_IMAGE_SR_ERROR) from exc
+
+        try:
+            _IMAGE_SR_PIPELINE = pipeline(
+                Tasks.image_super_resolution,
+                model="damo/cv_rrdb_image-super-resolution",
+            )
+        except Exception as exc:
+            _IMAGE_SR_ERROR = f"Failed to initialize image super-resolution pipeline: {exc}"
+            raise RuntimeError(_IMAGE_SR_ERROR) from exc
+        return _IMAGE_SR_PIPELINE
+
+
+def enhance_image_with_super_resolution(
+    input_path: str,
+    output_path: str,
+    blend_ratio: float = 0.42,
+) -> tuple[bool, str]:
+    if not os.path.exists(input_path):
+        return False, f"Input image does not exist: {input_path}"
+
+    try:
+        from PIL import Image, ImageOps
+    except Exception as exc:
+        return False, f"Pillow is required for image enhancement: {exc}"
+
+    try:
+        sr_pipeline = _load_image_super_resolution_pipeline()
+        result = sr_pipeline(input_path)
+    except Exception as exc:
+        return False, str(exc)
+
+    output_img = result.get("output_img") if isinstance(result, dict) else None
+    if output_img is None:
+        return False, f"Image super-resolution returned an unexpected payload: {type(result).__name__}"
+
+    try:
+        original = ImageOps.exif_transpose(Image.open(input_path)).convert("RGB")
+        enhanced = Image.fromarray(output_img).convert("RGB").resize(original.size, Image.Resampling.LANCZOS)
+        alpha = min(max(float(blend_ratio), 0.0), 1.0)
+        blended = Image.blend(original, enhanced, alpha)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        blended.save(output_path)
+        return True, output_path
+    except Exception as exc:
+        return False, f"Failed to save enhanced image: {exc}"
 
 
 def concat_video_clips(clip_paths: list[str], output_path: str) -> tuple[bool, str]:

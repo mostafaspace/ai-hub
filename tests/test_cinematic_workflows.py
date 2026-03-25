@@ -167,7 +167,7 @@ def test_series_intro_runner_creates_plan_audio_and_final_video(tmp_path, monkey
 
     assert result["title"] == "Glass Kingdom"
     assert result["final_video_url"].endswith("final-cinematic-cut.mp4")
-    assert len(result["shots"]) == 8
+    assert len(result["shots"]) == 10
     project = studio._load_project(project_id)
     assert any(asset["label"] == "series-intro" for asset in project["assets"])
 
@@ -178,7 +178,7 @@ def test_immersive_runner_falls_back_to_t2v_clips(tmp_path, monkeypatch):
     seed_task("task-immersive")
     monkeypatch.setattr(cinematic, "ffmpeg_available", lambda: True)
 
-    async def fake_storyboard(task_id, shot, index, profile_name):
+    async def fake_storyboard(task_id, shot, index, profile_name, quality_preset="premium"):
         image_path = studio._output_path(task_id, f"movement-{index}.png")
         touch_file(image_path)
         return {"path": image_path, "url": studio._relative_output_url(image_path)}
@@ -430,3 +430,97 @@ def test_series_intro_quality_gate_rejects_hold_fallback(tmp_path, monkeypatch):
         assert "quality floor" in str(exc)
     else:
         raise AssertionError("expected the cinematic quality gate to reject hold-only intro output")
+
+
+def test_default_intro_prompts_avoid_embedded_title_text():
+    req = cinematic.SeriesIntroRequest(
+        title="Empire of Glass",
+        concept="after the sun shatters, rival bloodlines wage a cold holy war above a storm-wrapped ocean of clouds",
+    )
+
+    shots = cinematic._default_intro_shots(req)
+
+    assert shots
+    assert all("title reveal shot" not in shot.image_prompt.lower() for shot in shots)
+    assert any("no text" in shot.image_prompt.lower() for shot in shots)
+    assert "later title overlay" in shots[-1].image_prompt.lower()
+
+
+def test_video_generation_candidates_raise_native_resolution_before_fallback():
+    assert cinematic._video_generation_candidates("cinematic_wide", "premium") == [
+        (1280, 704),
+        (1152, 640),
+        (1024, 576),
+    ]
+    assert cinematic._video_generation_candidates("cinematic_wide", "ultra") == [
+        (1536, 896),
+        (1280, 704),
+        (1152, 640),
+        (1024, 576),
+    ]
+
+
+def test_should_enhance_i2v_source_for_premium_and_ultra():
+    assert cinematic._should_enhance_i2v_source("premium") is True
+    assert cinematic._should_enhance_i2v_source("ultra") is True
+    assert cinematic._should_enhance_i2v_source("standard") is False
+
+
+def test_premium_clip_frame_count_uses_longer_native_motion():
+    assert cinematic._clip_frame_count(5.0, 24.0, "premium") == 121
+
+
+def test_long_cinematic_shots_expand_instead_of_looping():
+    shots = [
+        cinematic.CinematicShot(
+            label="scene-1",
+            image_prompt="storm throne",
+            motion_prompt="slow reveal",
+            duration_sec=6.0,
+        )
+    ]
+
+    expanded = cinematic._expand_shots_for_motion_budget(shots, "premium")
+
+    assert len(expanded) == 2
+    assert expanded[0].label == "scene-1-a"
+    assert expanded[1].label == "scene-1-b"
+    assert round(expanded[0].duration_sec, 2) == 3.0
+    assert round(expanded[1].duration_sec, 2) == 3.0
+
+
+def test_finalize_video_extends_short_audio_to_visual_duration(tmp_path, monkeypatch):
+    configure_studio_dirs(tmp_path, monkeypatch)
+    visual_path = studio._output_path("task-finalize", "visual-sequence.mp4")
+    audio_path = studio._output_path("task-finalize", "mixed-audio.m4a")
+    touch_file(visual_path)
+    touch_file(audio_path)
+
+    calls = {"looped_audio": None, "mux_audio": None}
+
+    def fake_detect_duration(path):
+        return 8.0
+
+    def fake_get_media_duration(path):
+        return 2.8 if path.endswith("mixed-audio.m4a") else 8.0
+
+    def fake_loop_audio(audio_in, target_duration, output_path):
+        calls["looped_audio"] = output_path
+        touch_file(output_path)
+        return True
+
+    def fake_mux(video_in, audio_in, output_path):
+        calls["mux_audio"] = audio_in
+        touch_file(output_path)
+        return True
+
+    monkeypatch.setattr(cinematic, "detect_duration", fake_detect_duration)
+    monkeypatch.setattr(cinematic, "get_media_duration", fake_get_media_duration)
+    monkeypatch.setattr(cinematic, "loop_audio_to_duration", fake_loop_audio)
+    monkeypatch.setattr(cinematic, "mux_video_and_audio", fake_mux)
+
+    result = asyncio.run(cinematic._finalize_video("task-finalize", "cinematic_wide", visual_path, audio_path))
+
+    assert result["duration_sec"] == 8.0
+    assert calls["looped_audio"] is not None
+    assert calls["mux_audio"] == calls["looped_audio"]
