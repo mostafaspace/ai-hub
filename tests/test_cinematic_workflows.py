@@ -9,6 +9,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT)
 
 import orchestrator.cinematic_api as cinematic
+import orchestrator.comfy_client as comfy_client
 import orchestrator.server as orch
 import orchestrator.studio_api as studio
 
@@ -99,8 +100,14 @@ def test_series_intro_runner_creates_plan_audio_and_final_video(tmp_path, monkey
     project_id = create_project()
     seed_task("task-intro")
     monkeypatch.setattr(cinematic, "ffmpeg_available", lambda: True)
+    monkeypatch.setattr(studio, "_require_backend", lambda kind: "http://127.0.0.1:8014")
+    monkeypatch.setattr(comfy_client, "workflow_template_ready", lambda name: True)
 
-    async def fake_build_shot_assets(task_id, project_id, label, shots, profile_name, use_i2v, quality_preset="premium"):
+    observed = {}
+
+    async def fake_build_shot_assets(task_id, project_id, label, shots, profile_name, use_i2v, quality_preset="premium", video_backend_name="video"):
+        observed["use_i2v"] = use_i2v
+        observed["video_backend_name"] = video_backend_name
         items = []
         for index, shot in enumerate(shots, start=1):
             clip_path = studio._output_path(task_id, f"scene-{index}.mp4")
@@ -166,6 +173,9 @@ def test_series_intro_runner_creates_plan_audio_and_final_video(tmp_path, monkey
     )
 
     assert result["title"] == "Glass Kingdom"
+    assert result["motion_strategy"] == "t2v_first"
+    assert observed["use_i2v"] is False
+    assert observed["video_backend_name"] == "video_premium"
     assert result["final_video_url"].endswith("final-cinematic-cut.mp4")
     assert len(result["shots"]) == 10
     project = studio._load_project(project_id)
@@ -186,7 +196,7 @@ def test_immersive_runner_falls_back_to_t2v_clips(tmp_path, monkeypatch):
     async def fake_i2v(task_id, shot, index, image_path, profile_name, quality_preset="premium"):
         raise RuntimeError("simulated i2v failure")
 
-    async def fake_t2v(task_id, shot, index, profile_name, quality_preset="premium"):
+    async def fake_t2v(task_id, shot, index, profile_name, quality_preset="premium", backend_name="video"):
         clip_path = studio._output_path(task_id, f"movement-{index}.mp4")
         touch_file(clip_path)
         return {"path": clip_path, "url": studio._relative_output_url(clip_path), "mode": "t2v"}
@@ -236,8 +246,13 @@ def test_cinematic_director_routes_prompt_only_requests_to_prompt_guided(tmp_pat
     project_id = create_project()
     seed_task("task-router-prompt")
     monkeypatch.setattr(cinematic, "ffmpeg_available", lambda: True)
+    monkeypatch.setattr(studio, "_require_backend", lambda kind: "http://127.0.0.1:8014")
+    monkeypatch.setattr(comfy_client, "workflow_template_ready", lambda name: True)
 
-    async def fake_build_shot_assets(task_id, project_id, label, shots, profile_name, use_i2v, quality_preset="premium"):
+    observed = {}
+
+    async def fake_build_shot_assets(task_id, project_id, label, shots, profile_name, use_i2v, quality_preset="premium", video_backend_name="video"):
+        observed["video_backend_name"] = video_backend_name
         clip_path = studio._output_path(task_id, "prompt-shot.mp4")
         still_path = studio._output_path(task_id, "prompt-shot.png")
         touch_file(clip_path)
@@ -306,6 +321,8 @@ def test_cinematic_director_routes_prompt_only_requests_to_prompt_guided(tmp_pat
 
     assert result["routing_mode"] == "prompt_guided"
     assert result["production_type"] == "trailer"
+    assert result["video_backend_name"] == "video_premium"
+    assert observed["video_backend_name"] == "video_premium"
     assert result["shots"][0]["animation_mode"] == "t2v"
 
 
@@ -314,11 +331,17 @@ def test_cinematic_director_routes_image_requests_to_image_guided(tmp_path, monk
     project_id = create_project()
     seed_task("task-router-image")
     monkeypatch.setattr(cinematic, "ffmpeg_available", lambda: True)
+    monkeypatch.setattr(studio, "_require_backend", lambda kind: "http://127.0.0.1:8014")
+    monkeypatch.setattr(comfy_client, "workflow_template_ready", lambda name: True)
 
     async def fake_prompt_guided(*args, **kwargs):
         raise AssertionError("prompt-guided path should not be used when source images are provided")
 
-    async def fake_image_guided(task_id, project_id, label, shots, profile_name, source_image_urls, use_i2v, quality_preset="premium"):
+    observed = {}
+
+    async def fake_image_guided(task_id, project_id, label, shots, profile_name, source_image_urls, use_i2v, quality_preset="premium", video_backend_name="video"):
+        observed["use_i2v"] = use_i2v
+        observed["video_backend_name"] = video_backend_name
         clip_path = studio._output_path(task_id, "guided-shot.mp4")
         still_path = studio._output_path(task_id, "guided-shot.png")
         touch_file(clip_path)
@@ -330,7 +353,7 @@ def test_cinematic_director_routes_image_requests_to_image_guided(tmp_path, monk
                 "storyboard_url": studio._relative_output_url(still_path),
                 "clip_url": studio._relative_output_url(clip_path),
                 "clip_path": clip_path,
-                "animation_mode": "i2v",
+                "animation_mode": "t2v",
                 "duration_sec": 3.0,
             }
         ]
@@ -385,8 +408,12 @@ def test_cinematic_director_routes_image_requests_to_image_guided(tmp_path, monk
     )
 
     assert result["routing_mode"] == "image_guided"
+    assert result["motion_strategy"] == "t2v_first"
+    assert result["video_backend_name"] == "video_premium"
     assert result["source_image_count"] == 1
-    assert result["shots"][0]["animation_mode"] == "i2v"
+    assert observed["use_i2v"] is False
+    assert observed["video_backend_name"] == "video_premium"
+    assert result["shots"][0]["animation_mode"] == "t2v"
 
 
 def test_series_intro_quality_gate_rejects_hold_fallback(tmp_path, monkeypatch):
@@ -394,8 +421,10 @@ def test_series_intro_quality_gate_rejects_hold_fallback(tmp_path, monkeypatch):
     project_id = create_project()
     seed_task("task-intro-hold")
     monkeypatch.setattr(cinematic, "ffmpeg_available", lambda: True)
+    monkeypatch.setattr(studio, "_require_backend", lambda kind: "http://127.0.0.1:8014")
+    monkeypatch.setattr(comfy_client, "workflow_template_ready", lambda name: True)
 
-    async def fake_build_shot_assets(task_id, project_id, label, shots, profile_name, use_i2v, quality_preset="premium"):
+    async def fake_build_shot_assets(task_id, project_id, label, shots, profile_name, use_i2v, quality_preset="premium", video_backend_name="video"):
         clip_path = studio._output_path(task_id, "scene-1.mp4")
         still_path = studio._output_path(task_id, "scene-1.png")
         touch_file(clip_path)
@@ -464,6 +493,65 @@ def test_should_enhance_i2v_source_for_premium_and_ultra():
     assert cinematic._should_enhance_i2v_source("premium") is True
     assert cinematic._should_enhance_i2v_source("ultra") is True
     assert cinematic._should_enhance_i2v_source("standard") is False
+
+
+def test_i2v_conditioning_strength_relaxes_cinematic_source_lock():
+    assert cinematic._i2v_conditioning_strength("ultra") == 0.72
+    assert cinematic._i2v_conditioning_strength("premium") == 0.82
+    assert cinematic._i2v_conditioning_strength("standard") == 1.0
+
+
+def test_prefer_t2v_motion_for_premium_series_intro_and_trailer():
+    assert cinematic._prefer_t2v_motion(True, "series_intro", "premium") is True
+    assert cinematic._prefer_t2v_motion(True, "trailer", "ultra") is True
+    assert cinematic._prefer_t2v_motion(True, "immersive_video", "premium") is False
+    assert cinematic._prefer_t2v_motion(False, "series_intro", "premium") is True
+
+
+def test_premium_video_backend_ready_rejects_local_ltx_for_premium_cinematic(monkeypatch):
+    monkeypatch.setattr(studio, "_require_backend", lambda kind: "http://127.0.0.1:8004")
+
+    assert cinematic._video_backend_is_premium_ready("immersive_video", "premium") is True
+    assert cinematic._video_backend_is_premium_ready("series_intro", "standard") is True
+    assert cinematic._video_backend_is_premium_ready("series_intro", "premium") is False
+
+
+def test_series_intro_runner_rejects_premium_render_on_local_ltx(tmp_path, monkeypatch):
+    configure_studio_dirs(tmp_path, monkeypatch)
+    project_id = create_project()
+    seed_task("task-intro-blocked")
+    monkeypatch.setattr(cinematic, "ffmpeg_available", lambda: True)
+    monkeypatch.setattr(studio, "_require_backend", lambda kind: "http://127.0.0.1:8004")
+
+    try:
+        asyncio.run(
+            cinematic._run_series_intro_task(
+                "task-intro-blocked",
+                {
+                    "project_id": project_id,
+                    "title": "Glass Kingdom",
+                    "concept": "a dynasty unraveling on a floating city",
+                    "label": "series-intro",
+                },
+            )
+        )
+    except RuntimeError as exc:
+        assert "Premium cinematic render blocked" in str(exc)
+    else:
+        raise AssertionError("expected premium series intro to be blocked on the local LTX backend")
+
+
+def test_ultra_detail_post_pass_only_runs_for_ultra():
+    assert cinematic._should_apply_detail_post_pass("ultra") is True
+    assert cinematic._should_apply_detail_post_pass("premium") is False
+
+
+def test_i2v_generation_candidates_avoid_1536_retry_dead_end():
+    assert cinematic._i2v_generation_candidates("cinematic_wide", "ultra") == [
+        (1280, 704),
+        (1152, 640),
+        (1024, 576),
+    ]
 
 
 def test_premium_clip_frame_count_uses_longer_native_motion():

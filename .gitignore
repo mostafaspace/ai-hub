@@ -35,3 +35,6 @@ temp/
 # OS
 .DS_Store
 Thumbs.db
+
+# Third-Party Backend Repositories
+ComfyUI/

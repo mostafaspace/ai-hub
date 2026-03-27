@@ -20,13 +20,15 @@ The **Practical Studio** endpoints extend the Orchestrator with non-destructive 
 4. **Safe Timeline Render**: Render a new output from stored clips/audio/subtitles without mutating originals.
 5. **Auto-Captions & Burn-In**: Generate approximate SRT captions and optionally produce a subtitle-burned video.
 6. **Thumbnails & Contact Sheets**: Build preview images for videos.
-7. **Output Profiles**: Apply reusable delivery presets like `youtube_short`, `discord_clip`, `podcast_mp3`, and `whatsapp_voice`.
+7. **Output Profiles**: Apply reusable delivery presets like `youtube_short`, `discord_clip`, `cinematic_wide`, `podcast_mp3`, and `whatsapp_voice`.
 8. **Voice Audition Mode**: Generate the same text in multiple voices and receive downloadable sample URLs.
 9. **Prompt Compare Mode**: Run multiple prompt variants through the Vision backend and collect the outputs in one async task.
 10. **Director-to-Project Runs**: Run the existing Director workflow behind an async Studio task and automatically attach the final video to a project.
 11. **Project Export / Import**: Package a workspace and bundled local assets into a zip and import it elsewhere.
 12. **Task Durability**: Persist Studio tasks to disk, expose task events, and support cancel / resume / retry controls.
 13. **Webhooks & Observability**: Send optional task callbacks and query Studio metrics for counts, durations, failures, and storage usage.
+14. **Cinematic Creator Workflows**: Build a scored series intro or a long-form immersive visual package with saved shot plans, storyboard frames, animated shots, and final project-attached renders.
+15. **Server-Side Cinematic Routing**: Call one cinematic endpoint and let the orchestrator choose image-guided or prompt-guided generation based on whether source images are attached.
 
 ## Request Guidance
 
@@ -162,6 +164,57 @@ Multipart form with `file` and optional `label`.
     "size": "1024x1024",
     "cfg_normalization": true
   }
+}
+```
+
+### Series Intro Builder
+**POST** `/v1/studio/projects/{project_id}/series-intros`
+
+`payload.json`
+```json
+{
+  "title": "Glass Kingdom",
+  "concept": "a dynasty unraveling on a floating city",
+  "genre": "prestige sci-fi drama",
+  "duration_sec": 60,
+  "voice": "Vivian",
+  "use_i2v": true
+}
+```
+
+### Unified Cinematic Director
+**POST** `/v1/studio/projects/{project_id}/cinematic-productions`
+
+Use this as the default OpenClaw entry point.
+
+If `source_image_urls` is provided, the orchestrator routes the run as image-guided and prefers `i2v`.
+If no source images are provided, the orchestrator routes the run as prompt-guided and builds the shots itself, preferring `t2v`.
+
+`payload.json`
+```json
+{
+  "production_type": "auto",
+  "title": "Empire of Ashes",
+  "concept": "after the sun is shattered, rival bloodlines fight above the clouds for the last ember",
+  "duration_sec": 45,
+  "scene_count": 6,
+  "source_image_urls": [],
+  "use_project_image_assets": false,
+  "use_i2v": true,
+  "output_profile": "cinematic_wide"
+}
+```
+
+### Immersive Video Builder
+**POST** `/v1/studio/projects/{project_id}/immersive-videos`
+
+`payload.json`
+```json
+{
+  "concept": "an atmospheric journey through a rain-soaked neon district",
+  "duration_sec": 180,
+  "use_i2v": true,
+  "output_profile": "cinematic_wide"
 }
 ```
 

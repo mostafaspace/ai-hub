@@ -569,3 +569,327 @@ paths:
       responses:
         '200':
           description: Task accepted.
+  /v1/studio/projects/{project_id}/short-form-packs:
+    post:
+      summary: Turn a long video into a package of short clips with captions, thumbnails, and platform variants.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [media_url]
+              properties:
+                media_url:
+                  type: string
+                target_count:
+                  type: integer
+                clip_duration_sec:
+                  type: number
+                output_profiles:
+                  type: array
+                  items:
+                    type: string
+                burn_captions:
+                  type: boolean
+                include_contact_sheet:
+                  type: boolean
+                webhook_url:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/projects/{project_id}/episode-packs:
+    post:
+      summary: Build a podcast or narrated talking-head asset pack from notes, outlines, URLs, or brochures.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source_text:
+                  type: string
+                source_url:
+                  type: string
+                brochure_url:
+                  type: string
+                title:
+                  type: string
+                voice:
+                  type: string
+                audition_voices:
+                  type: array
+                  items:
+                    type: string
+                language:
+                  type: string
+                cover_prompt:
+                  type: string
+                generate_teaser_video:
+                  type: boolean
+                webhook_url:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/projects/{project_id}/localization-runs:
+    post:
+      summary: Localize a video into new languages with dubbed audio and optional burned subtitles.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [media_url]
+              properties:
+                media_url:
+                  type: string
+                target_languages:
+                  type: array
+                  items:
+                    type: string
+                voice:
+                  type: string
+                burn_subtitles:
+                  type: boolean
+                subtitle_profile:
+                  type: string
+                webhook_url:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/projects/{project_id}/meeting-deliverables:
+    post:
+      summary: Turn a meeting recording into transcript, action items, follow-up email, briefing audio, and stakeholder clip.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [media_url]
+              properties:
+                media_url:
+                  type: string
+                recipient_name:
+                  type: string
+                sender_name:
+                  type: string
+                briefing_voice:
+                  type: string
+                stakeholder_clip_duration_sec:
+                  type: number
+                webhook_url:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/projects/{project_id}/marketing-kits:
+    post:
+      summary: Turn product copy, URLs, or brochures into a hero image, comparison visual, ad voiceover, hooks, and teaser.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source_text:
+                  type: string
+                source_url:
+                  type: string
+                brochure_url:
+                  type: string
+                product_name:
+                  type: string
+                target_audiences:
+                  type: array
+                  items:
+                    type: string
+                voice:
+                  type: string
+                generate_teaser_video:
+                  type: boolean
+                webhook_url:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/projects/{project_id}/series-intros:
+    post:
+      summary: Build a cinematic series intro with a saved shot plan, storyboard frames, animated shots, narration, score, and final cut.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, concept]
+              properties:
+                title:
+                  type: string
+                concept:
+                  type: string
+                genre:
+                  type: string
+                style_notes:
+                  type: string
+                duration_sec:
+                  type: number
+                scene_count:
+                  type: integer
+                narration_text:
+                  type: string
+                voice:
+                  type: string
+                music_prompt:
+                  type: string
+                use_i2v:
+                  type: boolean
+                output_profile:
+                  type: string
+                shot_plan:
+                  type: array
+                  items:
+                    type: object
+                webhook_url:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/projects/{project_id}/cinematic-productions:
+    post:
+      summary: Unified cinematic router that chooses image-guided or prompt-guided generation server-side based on the request inputs.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [concept]
+              properties:
+                production_type:
+                  type: string
+                title:
+                  type: string
+                concept:
+                  type: string
+                genre:
+                  type: string
+                style_notes:
+                  type: string
+                duration_sec:
+                  type: number
+                scene_count:
+                  type: integer
+                narration_text:
+                  type: string
+                voice:
+                  type: string
+                music_prompt:
+                  type: string
+                source_image_urls:
+                  type: array
+                  items:
+                    type: string
+                use_project_image_assets:
+                  type: boolean
+                use_i2v:
+                  type: boolean
+                output_profile:
+                  type: string
+                shot_plan:
+                  type: array
+                  items:
+                    type: object
+                webhook_url:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/projects/{project_id}/immersive-videos:
+    post:
+      summary: Build a long-form immersive cinematic visual package with storyboard frames, animated shots, score, and final render.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [concept]
+              properties:
+                concept:
+                  type: string
+                style_notes:
+                  type: string
+                duration_sec:
+                  type: number
+                scene_count:
+                  type: integer
+                music_prompt:
+                  type: string
+                use_i2v:
+                  type: boolean
+                output_profile:
+                  type: string
+                shot_plan:
+                  type: array
+                  items:
+                    type: object
+                webhook_url:
+                  type: string
+      responses:
+        '200':
+          description: Task accepted.

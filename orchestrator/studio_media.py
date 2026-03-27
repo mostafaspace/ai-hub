@@ -387,6 +387,102 @@ def enhance_image_with_super_resolution(
         return False, f"Failed to save enhanced image: {exc}"
 
 
+def enhance_video_with_super_resolution(
+    input_path: str,
+    output_path: str,
+    fps: float,
+    blend_ratio: float = 0.38,
+    crf: int = 14,
+) -> tuple[bool, str]:
+    ffmpeg_cmd = _ffmpeg_cmd()
+    if ffmpeg_cmd is None:
+        return False, "FFmpeg not found locally or on PATH."
+    if not os.path.exists(input_path):
+        return False, f"Input video does not exist: {input_path}"
+
+    try:
+        from PIL import Image
+    except Exception as exc:
+        return False, f"Pillow is required for video enhancement: {exc}"
+
+    try:
+        sr_pipeline = _load_image_super_resolution_pipeline()
+    except Exception as exc:
+        return False, str(exc)
+
+    alpha = min(max(float(blend_ratio), 0.0), 1.0)
+    frame_rate = max(float(fps or 24.0), 1.0)
+    temp_root = tempfile.mkdtemp(prefix="rrdb-pass-")
+    frames_dir = os.path.join(temp_root, "frames")
+    enhanced_dir = os.path.join(temp_root, "enhanced")
+    os.makedirs(frames_dir, exist_ok=True)
+    os.makedirs(enhanced_dir, exist_ok=True)
+
+    try:
+        extract_result = subprocess.run(
+            [
+                ffmpeg_cmd,
+                "-y",
+                "-i",
+                input_path,
+                "-fps_mode",
+                "passthrough",
+                os.path.join(frames_dir, "frame-%04d.png"),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if extract_result.returncode != 0:
+            return False, extract_result.stderr or extract_result.stdout or "Failed to extract frames."
+
+        frame_names = sorted(name for name in os.listdir(frames_dir) if name.lower().endswith(".png"))
+        if not frame_names:
+            return False, "No frames were extracted for enhancement."
+
+        for frame_name in frame_names:
+            frame_path = os.path.join(frames_dir, frame_name)
+            result = sr_pipeline(frame_path)
+            output_img = result.get("output_img") if isinstance(result, dict) else None
+            if output_img is None:
+                return False, f"Image super-resolution returned an unexpected payload for {frame_name}."
+
+            original = Image.open(frame_path).convert("RGB")
+            enhanced = Image.fromarray(output_img).convert("RGB").resize(original.size, Image.Resampling.LANCZOS)
+            blended = Image.blend(original, enhanced, alpha)
+            blended.save(os.path.join(enhanced_dir, frame_name))
+
+        encode_result = subprocess.run(
+            [
+                ffmpeg_cmd,
+                "-y",
+                "-framerate",
+                f"{frame_rate:.3f}",
+                "-i",
+                os.path.join(enhanced_dir, "frame-%04d.png"),
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-preset",
+                "medium",
+                "-crf",
+                str(max(0, int(crf))),
+                output_path,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if encode_result.returncode != 0:
+            return False, encode_result.stderr or encode_result.stdout or "Failed to encode enhanced video."
+        return True, output_path
+    except Exception as exc:
+        return False, f"Video enhancement failed: {exc}"
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
 def concat_video_clips(clip_paths: list[str], output_path: str) -> tuple[bool, str]:
     if not clip_paths:
         return False, "No clips were provided for concatenation."

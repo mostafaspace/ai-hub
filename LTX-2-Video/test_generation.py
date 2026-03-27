@@ -21,9 +21,11 @@ else:
 # Start generation using our optimized defaults explicitly!
 payload = {
     "prompt": "3D animation, a futuristic cute robot dancing in a neon-lit cyber city, highly detailed, masterpiece, vibrant colors, dynamic neon lighting",
-    "num_inference_steps": 11,
-    "cfg_scale_video": 3.5,
-    "num_frames": 81,
+    "num_inference_steps": 35,
+    "height": 704,
+    "width": 1280,
+    "cfg_scale_video": 3.0,
+    "num_frames": 121,
     "seed": 42
 }
 

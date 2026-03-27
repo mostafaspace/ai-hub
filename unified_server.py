@@ -29,9 +29,20 @@ PYTHON_BIN = WORKSPACE_PYTHON if os.path.exists(WORKSPACE_PYTHON) else sys.execu
 def python_cmd(*args):
     return [PYTHON_BIN, "-u", *args]
 
+
+def comfy_python_cmd(*args):
+    comfy_candidates = [
+        os.path.join(ROOT_DIR, "ComfyUI", ".venv312", "Scripts", "python.exe"),
+        os.path.join(ROOT_DIR, "ComfyUI", ".venv", "Scripts", "python.exe"),
+    ]
+    python_bin = next((path for path in comfy_candidates if os.path.exists(path)), PYTHON_BIN)
+    return [python_bin, "-u", *args]
+
 def kill_port_occupants():
     """Kill any existing processes occupying our configured ports."""
     ports = {config.TTS_PORT, config.MUSIC_PORT, config.ASR_PORT, config.VISION_PORT, config.VIDEO_PORT, config.ORCHESTRATOR_PORT}
+    if getattr(config, "COMFYUI_PORT", None):
+        ports.add(config.COMFYUI_PORT)
     pids_to_kill = set()
 
     try:
@@ -113,6 +124,22 @@ SERVERS = [
         "color": "\033[94m",  # Blue
     },
 ]
+
+COMFYUI_MAIN = os.path.join(ROOT_DIR, "ComfyUI", "main.py")
+COMFYUI_CUSTOM_NODE = os.path.join(ROOT_DIR, "ComfyUI", "custom_nodes", "ComfyUI-LTXVideo")
+COMFYUI_VENVS = [
+    os.path.join(ROOT_DIR, "ComfyUI", ".venv312", "Scripts", "python.exe"),
+    os.path.join(ROOT_DIR, "ComfyUI", ".venv", "Scripts", "python.exe"),
+]
+if os.path.exists(COMFYUI_MAIN) and any(os.path.exists(path) for path in COMFYUI_VENVS):
+    SERVERS.append(
+        {
+            "name": "VIDEO_PREMIUM",
+            "cwd": "ComfyUI",
+            "cmd": comfy_python_cmd("main.py", "--listen", config.HOST, "--port", str(config.COMFYUI_PORT)),
+            "color": "\033[91m",  # Light red
+        }
+    )
 
 # Global state
 processes = []

@@ -9,6 +9,7 @@ import httpx
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from orchestrator import comfy_client
 from orchestrator import studio_api as studio
 from orchestrator.business_media import ffmpeg_available, render_image_hold_clip
 from orchestrator.media_utils import (
@@ -22,6 +23,7 @@ from orchestrator.studio_media import (
     concat_video_clips,
     detect_duration,
     enhance_image_with_super_resolution,
+    enhance_video_with_super_resolution,
     normalize_video_clip,
     polish_cinematic_clip,
     resolve_format_profile,
@@ -29,6 +31,7 @@ from orchestrator.studio_media import (
 
 
 cinematic_router = APIRouter(prefix="/v1/studio", tags=["Cinematic Studio"])
+PREMIUM_COMFY_T2V_TEMPLATE = "premium_ltx23_t2v"
 
 DEFAULT_NEGATIVE_PROMPT = (
     "blurry, flicker, low detail, muddy texture, warped anatomy, deformed faces, extra limbs, "
@@ -188,6 +191,64 @@ def _video_should_enhance_prompt(preset: str) -> bool:
 
 def _should_enhance_i2v_source(preset: str) -> bool:
     return _resolve_quality_preset(preset) in {"premium", "ultra"}
+
+
+def _should_apply_detail_post_pass(preset: str) -> bool:
+    return _resolve_quality_preset(preset) == "ultra"
+
+
+def _i2v_conditioning_strength(preset: str) -> float:
+    resolved = _resolve_quality_preset(preset)
+    if resolved == "ultra":
+        return 0.72
+    if resolved == "premium":
+        return 0.82
+    return 1.0
+
+
+def _prefer_t2v_motion(
+    requested_use_i2v: bool,
+    production_type: str,
+    quality_preset: str,
+) -> bool:
+    if not requested_use_i2v:
+        return True
+    resolved = _resolve_quality_preset(quality_preset)
+    if production_type in {"series_intro", "trailer"} and resolved in {"premium", "ultra"}:
+        return True
+    return False
+
+
+def _preferred_video_backend_name(production_type: str, quality_preset: str) -> str:
+    resolved = _resolve_quality_preset(quality_preset)
+    if production_type not in {"series_intro", "trailer"}:
+        return "video"
+    if resolved not in {"premium", "ultra"}:
+        return "video"
+    try:
+        studio._require_backend("video_premium")
+    except Exception:
+        return "video"
+    if not comfy_client.workflow_template_ready(PREMIUM_COMFY_T2V_TEMPLATE):
+        return "video"
+    return "video_premium"
+
+
+def _video_backend_is_premium_ready(production_type: str, quality_preset: str) -> bool:
+    if production_type not in {"series_intro", "trailer"}:
+        return True
+    if _resolve_quality_preset(quality_preset) not in {"premium", "ultra"}:
+        return True
+    return _preferred_video_backend_name(production_type, quality_preset) == "video_premium"
+
+
+def _assert_premium_video_backend_ready(production_type: str, quality_preset: str) -> None:
+    if _video_backend_is_premium_ready(production_type, quality_preset):
+        return
+    raise RuntimeError(
+        "Premium cinematic render blocked: no premium ComfyUI video backend is configured and workflow-ready for "
+        "series intros/trailers. Add a ComfyUI premium backend and an API-format workflow template, or use a lower-stakes draft flow."
+    )
 
 
 def _effective_series_intro_duration(duration_sec: float) -> float:
@@ -397,6 +458,16 @@ def _video_generation_candidates(profile_name: str, quality_preset: str = "premi
 
 def _video_generation_dimensions(profile_name: str, quality_preset: str = "premium") -> tuple[int, int]:
     return _video_generation_candidates(profile_name, quality_preset)[0]
+
+
+def _i2v_generation_candidates(profile_name: str, quality_preset: str = "premium") -> list[tuple[int, int]]:
+    candidates = _video_generation_candidates(profile_name, quality_preset)
+    limited: list[tuple[int, int]] = []
+    for width, height in candidates:
+        if max(width, height) > 1280:
+            continue
+        limited.append((width, height))
+    return limited or candidates
 
 
 def _motion_budget_seconds(quality_preset: str) -> float:
@@ -614,7 +685,7 @@ async def _generate_i2v_clip(
 ) -> dict[str, Any]:
     video_backend = studio._require_backend("video")
     profile = resolve_format_profile(profile_name)
-    resolution_candidates = _video_generation_candidates(profile_name, quality_preset)
+    resolution_candidates = _i2v_generation_candidates(profile_name, quality_preset)
     fps = float(profile["fps"])
     target_duration = _clip_duration(shot.duration_sec)
     motion_budget = _motion_budget_seconds(quality_preset)
@@ -630,6 +701,7 @@ async def _generate_i2v_clip(
     negative_prompt = _video_negative_prompt(shot)
     inference_steps = _video_inference_steps(quality_preset)
     enhance_prompt = "true" if _video_should_enhance_prompt(quality_preset) else "false"
+    conditioning_strength = _i2v_conditioning_strength(quality_preset)
     conditioning_image_path = image_path
     if _should_enhance_i2v_source(quality_preset):
         enhanced_image_path = studio._output_path(task_id, f"{slug}-conditioning.png")
@@ -665,6 +737,7 @@ async def _generate_i2v_clip(
                                 "frame_rate": str(fps),
                                 "num_inference_steps": str(inference_steps),
                                 "seed": "-1",
+                                "conditioning_strength": f"{conditioning_strength:.3f}",
                                 "negative_prompt": negative_prompt,
                                 "enhance_prompt": enhance_prompt,
                             },
@@ -719,12 +792,32 @@ async def _generate_i2v_clip(
     )
     if not success:
         raise RuntimeError(f"Failed to polish animated shot {slug}: {message}")
+    if _should_apply_detail_post_pass(quality_preset):
+        enhanced_output_path = studio._output_path(task_id, f"{slug}-detail.mp4")
+        detail_success, detail_message = await asyncio.to_thread(
+            enhance_video_with_super_resolution,
+            output_path,
+            enhanced_output_path,
+            fps,
+            0.38,
+            14,
+        )
+        if detail_success:
+            output_path = enhanced_output_path
+            studio._record_task_event(task_id, f"Detail post-pass completed for {slug}.", f"{slug}-detail-pass")
+        else:
+            studio._record_task_event(
+                task_id,
+                f"Detail post-pass skipped for {slug}: {detail_message}",
+                f"{slug}-detail-pass-skip",
+            )
     return {
         "path": output_path,
         "url": studio._relative_output_url(output_path),
         "mode": "i2v",
         "duration_sec": final_duration,
         "generation_resolution": f"{used_width}x{used_height}",
+        "conditioning_strength": conditioning_strength,
     }
 
 
@@ -734,8 +827,9 @@ async def _generate_t2v_clip(
     index: int,
     profile_name: str,
     quality_preset: str = "premium",
+    backend_name: str = "video",
 ) -> dict[str, Any]:
-    video_backend = studio._require_backend("video")
+    video_backend = studio._require_backend(backend_name)
     profile = resolve_format_profile(profile_name)
     resolution_candidates = _video_generation_candidates(profile_name, quality_preset)
     fps = float(profile["fps"])
@@ -754,6 +848,34 @@ async def _generate_t2v_clip(
     negative_prompt = _video_negative_prompt(shot)
     inference_steps = _video_inference_steps(quality_preset)
     enhance_prompt = _video_should_enhance_prompt(quality_preset)
+
+    if backend_name == "video_premium":
+        comfy_output_path = studio._output_path(task_id, f"{slug}-comfy.mp4")
+        comfy_result = await comfy_client.run_workflow(
+            video_backend,
+            PREMIUM_COMFY_T2V_TEMPLATE,
+            {
+                "prompt": prompt,
+                "negative_prompt": negative_prompt,
+                "width": resolution_candidates[0][0],
+                "height": resolution_candidates[0][1],
+                "num_frames": _clip_frame_count(target_duration, fps, quality_preset),
+                "frame_rate": int(round(fps)),
+                "num_inference_steps": inference_steps,
+                "seed": -1,
+            },
+            output_path=comfy_output_path,
+        )
+        raw_duration = await asyncio.to_thread(detect_duration, comfy_output_path)
+        return {
+            "path": comfy_output_path,
+            "url": studio._relative_output_url(comfy_output_path),
+            "mode": "t2v",
+            "duration_sec": min(target_duration, raw_duration or target_duration),
+            "generation_resolution": f"{resolution_candidates[0][0]}x{resolution_candidates[0][1]}",
+            "backend": backend_name,
+            "prompt_id": comfy_result.get("prompt_id"),
+        }
 
     async with studio._get_async_lock("video"):
         async with httpx.AsyncClient(timeout=None) as client:
@@ -823,6 +945,25 @@ async def _generate_t2v_clip(
     )
     if not success:
         raise RuntimeError(f"Failed to polish generated shot {slug}: {message}")
+    if _should_apply_detail_post_pass(quality_preset):
+        enhanced_output_path = studio._output_path(task_id, f"{slug}-detail.mp4")
+        detail_success, detail_message = await asyncio.to_thread(
+            enhance_video_with_super_resolution,
+            output_path,
+            enhanced_output_path,
+            fps,
+            0.38,
+            14,
+        )
+        if detail_success:
+            output_path = enhanced_output_path
+            studio._record_task_event(task_id, f"Detail post-pass completed for {slug}.", f"{slug}-detail-pass")
+        else:
+            studio._record_task_event(
+                task_id,
+                f"Detail post-pass skipped for {slug}: {detail_message}",
+                f"{slug}-detail-pass-skip",
+            )
     return {
         "path": output_path,
         "url": studio._relative_output_url(output_path),
@@ -856,6 +997,7 @@ async def _build_image_guided_shot_assets(
     source_image_urls: list[str],
     use_i2v: bool,
     quality_preset: str = "premium",
+    video_backend_name: str = "video",
 ) -> list[dict[str, Any]]:
     if not source_image_urls:
         raise RuntimeError("Image-guided cinematic runs require at least one source image.")
@@ -884,7 +1026,7 @@ async def _build_image_guided_shot_assets(
                 studio._record_task_event(task_id, f"I2V fallback on shot {index}: {exc}", f"shot-{index}-fallback")
         if clip is None:
             try:
-                clip = await _generate_t2v_clip(task_id, shot, index, profile_name, quality_preset)
+                clip = await _generate_t2v_clip(task_id, shot, index, profile_name, quality_preset, video_backend_name)
             except Exception as exc:
                 studio._record_task_event(task_id, f"T2V fallback on shot {index}: {exc}", f"shot-{index}-fallback")
         if clip is None:
@@ -928,6 +1070,7 @@ async def _build_shot_assets(
     profile_name: str,
     use_i2v: bool,
     quality_preset: str = "premium",
+    video_backend_name: str = "video",
 ) -> list[dict[str, Any]]:
     rendered_shots = []
     for index, shot in enumerate(shots, start=1):
@@ -954,7 +1097,7 @@ async def _build_shot_assets(
                 )
         if clip is None:
             try:
-                clip = await _generate_t2v_clip(task_id, shot, index, profile_name, quality_preset)
+                clip = await _generate_t2v_clip(task_id, shot, index, profile_name, quality_preset, video_backend_name)
             except Exception as exc:
                 studio._record_task_event(
                     task_id,
@@ -1021,8 +1164,12 @@ async def _run_cinematic_director_task(task_id: str, spec: dict[str, Any]) -> di
         raise RuntimeError("FFmpeg is required for cinematic assembly.")
 
     production_type = _resolve_production_type(req)
+    _assert_premium_video_backend_ready(production_type, req.quality_preset)
+    video_backend_name = _preferred_video_backend_name(production_type, req.quality_preset)
     source_image_urls = await _resolve_source_image_urls(req)
     routing_mode = "image_guided" if source_image_urls else "prompt_guided"
+    prefer_t2v_motion = _prefer_t2v_motion(req.use_i2v, production_type, req.quality_preset)
+    effective_use_i2v = req.use_i2v and not prefer_t2v_motion
     shots = list(req.shot_plan)
     if not shots:
         if production_type == "series_intro":
@@ -1118,11 +1265,18 @@ async def _run_cinematic_director_task(task_id: str, spec: dict[str, Any]) -> di
             "music_prompt": music_prompt,
             "output_profile": req.output_profile,
             "source_image_urls": source_image_urls,
+            "motion_strategy": "t2v_first" if prefer_t2v_motion else "i2v_first",
+            "video_backend_name": video_backend_name,
+            "requested_use_i2v": req.use_i2v,
             "shots": _shot_spec_payload(shots),
         },
         f"{req.label}-plan",
     )
-    studio._record_task_event(task_id, f"Cinematic plan captured using {routing_mode} routing.", "planned")
+    studio._record_task_event(
+        task_id,
+        f"Cinematic plan captured using {routing_mode} routing with {'t2v-first' if prefer_t2v_motion else 'i2v-first'} motion.",
+        "planned",
+    )
 
     if source_image_urls:
         rendered_shots = await _build_image_guided_shot_assets(
@@ -1132,8 +1286,9 @@ async def _run_cinematic_director_task(task_id: str, spec: dict[str, Any]) -> di
             shots,
             req.output_profile,
             source_image_urls,
-            req.use_i2v,
+            effective_use_i2v,
             req.quality_preset,
+            video_backend_name,
         )
     else:
         rendered_shots = await _build_shot_assets(
@@ -1142,8 +1297,9 @@ async def _run_cinematic_director_task(task_id: str, spec: dict[str, Any]) -> di
             req.label,
             shots,
             req.output_profile,
-            req.use_i2v,
+            effective_use_i2v,
             req.quality_preset,
+            video_backend_name,
         )
 
     _assert_cinematic_delivery_quality(production_type, req.quality_preset, rendered_shots)
@@ -1180,6 +1336,8 @@ async def _run_cinematic_director_task(task_id: str, spec: dict[str, Any]) -> di
         "title": title,
         "production_type": production_type,
         "routing_mode": routing_mode,
+        "motion_strategy": "t2v_first" if prefer_t2v_motion else "i2v_first",
+        "video_backend_name": video_backend_name,
         "source_image_count": len(source_image_urls),
         "plan_url": plan_url,
         "narration_url": narration_url,
@@ -1285,9 +1443,13 @@ async def _run_series_intro_task(task_id: str, spec: dict[str, Any]) -> dict[str
     studio._load_project(req.project_id)
     if not ffmpeg_available():
         raise RuntimeError("FFmpeg is required for cinematic assembly.")
+    _assert_premium_video_backend_ready("series_intro", req.quality_preset)
+    video_backend_name = _preferred_video_backend_name("series_intro", req.quality_preset)
 
     shots = req.shot_plan or _default_intro_shots(req)
     shots = _expand_shots_for_motion_budget(shots, req.quality_preset)
+    prefer_t2v_motion = _prefer_t2v_motion(req.use_i2v, "series_intro", req.quality_preset)
+    effective_use_i2v = req.use_i2v and not prefer_t2v_motion
     narration_text = (req.narration_text or _default_intro_narration(req)).strip()
     music_prompt = (req.music_prompt or _default_intro_music(req)).strip()
     plan_url = await _write_plan_asset(
@@ -1304,11 +1466,18 @@ async def _run_series_intro_task(task_id: str, spec: dict[str, Any]) -> dict[str
             "narration_text": narration_text,
             "music_prompt": music_prompt,
             "output_profile": req.output_profile,
+            "motion_strategy": "t2v_first" if prefer_t2v_motion else "i2v_first",
+            "video_backend_name": video_backend_name,
+            "requested_use_i2v": req.use_i2v,
             "shots": _shot_spec_payload(shots),
         },
         f"{req.label}-plan",
     )
-    studio._record_task_event(task_id, "Series intro plan captured.", "planned")
+    studio._record_task_event(
+        task_id,
+        f"Series intro plan captured with {'t2v-first' if prefer_t2v_motion else 'i2v-first'} motion.",
+        "planned",
+    )
 
     rendered_shots = await _build_shot_assets(
         task_id,
@@ -1316,8 +1485,9 @@ async def _run_series_intro_task(task_id: str, spec: dict[str, Any]) -> dict[str
         req.label,
         shots,
         req.output_profile,
-        req.use_i2v,
+        effective_use_i2v,
         req.quality_preset,
+        video_backend_name,
     )
     _assert_cinematic_delivery_quality("series_intro", req.quality_preset, rendered_shots)
     visual = await _assemble_visual_sequence(task_id, [item["clip_path"] for item in rendered_shots])
@@ -1347,6 +1517,8 @@ async def _run_series_intro_task(task_id: str, spec: dict[str, Any]) -> dict[str
         "task_id": task_id,
         "status": "completed",
         "title": req.title,
+        "motion_strategy": "t2v_first" if prefer_t2v_motion else "i2v_first",
+        "video_backend_name": video_backend_name,
         "plan_url": plan_url,
         "narration_url": narration_url,
         "music_url": music["url"],
@@ -1402,6 +1574,7 @@ async def _run_immersive_video_task(task_id: str, spec: dict[str, Any]) -> dict[
         req.output_profile,
         req.use_i2v,
         req.quality_preset,
+        "video",
     )
     _assert_cinematic_delivery_quality("immersive_video", req.quality_preset, rendered_shots)
     visual = await _assemble_visual_sequence(task_id, [item["clip_path"] for item in rendered_shots])

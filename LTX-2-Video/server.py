@@ -71,13 +71,14 @@ RETRY_WITHOUT_DISTILLED_LORA_ON_OOM = bool(getattr(config, "VIDEO_RETRY_WITHOUT_
 # Quality-biased defaults based on the official LTX-2 guidance and the linked
 # Kaggle notebook: prompt enhancement on, 24 fps, and more stage-1 denoising.
 DEFAULT_FRAME_RATE = 24.0
-DEFAULT_NUM_INFERENCE_STEPS = 20
+DEFAULT_NUM_INFERENCE_STEPS = 35
 DEFAULT_VIDEO_CFG_SCALE = 3.0
 DEFAULT_VIDEO_STG_SCALE = 1.0
 DEFAULT_AUDIO_CFG_SCALE = 7.0
 DEFAULT_MODALITY_SCALE = 3.0
 DEFAULT_RESCALE_SCALE = 0.7
 DEFAULT_STG_BLOCKS = [29]
+DEFAULT_I2V_CONDITIONING_STRENGTH = 1.0
 
 
 # --- Model Management (Auto-Unload via Thread RLock) ---
@@ -185,8 +186,8 @@ except ImportError as e:
 # For robust JSON handling, Pydantic defaults are set correctly.
 class VideoGenerationRequest(BaseModel):
     prompt: str = Field(..., description="Chronological, literal description of scene")
-    height: int = Field(default=512, description="Base height before upsampling")
-    width: int = Field(default=768, description="Base width before upsampling")
+    height: int = Field(default=704, description="Base height before upsampling")
+    width: int = Field(default=1280, description="Base width before upsampling")
     num_frames: int = Field(default=121, description="Number of frames")
     frame_rate: float = Field(default=DEFAULT_FRAME_RATE, description="FPS for the mp4 file")
     num_inference_steps: int = Field(
@@ -416,6 +417,8 @@ def _run_i2v_once(
     seed: int,
     cfg_scale_video: float,
     stg_scale_video: float,
+    modality_scale: float,
+    conditioning_strength: float,
     negative_prompt: str,
     enhance_prompt: bool,
 ) -> str:
@@ -425,9 +428,10 @@ def _run_i2v_once(
         cfg_scale_video=cfg_scale_video,
         stg_scale_video=stg_scale_video,
         cfg_scale_audio=DEFAULT_AUDIO_CFG_SCALE,
-        modality_scale=DEFAULT_MODALITY_SCALE,
+        modality_scale=modality_scale,
     )
-    image_conditions = [(image_path, 0, 1.0)]
+    condition_strength = max(0.0, min(float(conditioning_strength), 1.0))
+    image_conditions = [(image_path, 0, condition_strength)]
     enhance_prompt = _resolve_enhance_prompt(
         prompt=prompt,
         enhance_prompt=enhance_prompt,
@@ -509,6 +513,8 @@ def _process_async_i2v(task_id: str, image_path: str, prompt: str,
                        height: int, width: int, num_frames: int, frame_rate: float,
                        num_inference_steps: int, seed: int,
                        cfg_scale_video: float, stg_scale_video: float,
+                       modality_scale: float,
+                       conditioning_strength: float,
                        negative_prompt: str, enhance_prompt: bool):
     """Background worker for async I2V generation."""
     global is_generating
@@ -518,7 +524,8 @@ def _process_async_i2v(task_id: str, image_path: str, prompt: str,
             try:
                 url = _run_i2v_once(
                     task_id, image_path, prompt, height, width, num_frames, frame_rate,
-                    num_inference_steps, seed, cfg_scale_video, stg_scale_video,
+                    num_inference_steps, seed, cfg_scale_video, stg_scale_video, modality_scale,
+                    conditioning_strength,
                     negative_prompt, enhance_prompt,
                 )
             except Exception as first_exc:
@@ -526,7 +533,8 @@ def _process_async_i2v(task_id: str, image_path: str, prompt: str,
                     raise
                 url = _run_i2v_once(
                     task_id, image_path, prompt, height, width, num_frames, frame_rate,
-                    num_inference_steps, seed, cfg_scale_video, stg_scale_video,
+                    num_inference_steps, seed, cfg_scale_video, stg_scale_video, modality_scale,
+                    conditioning_strength,
                     negative_prompt, enhance_prompt,
                 )
             video_tasks[task_id] = {"status": "completed", "url": url}
@@ -566,14 +574,16 @@ def async_t2v(req: VideoGenerationRequest):
 async def async_i2v(
     prompt: str = Form(...),
     image: UploadFile = File(...),
-    height: int = Form(512),
-    width: int = Form(768),
+    height: int = Form(704),
+    width: int = Form(1280),
     num_frames: int = Form(121),
     frame_rate: float = Form(DEFAULT_FRAME_RATE),
     num_inference_steps: int = Form(DEFAULT_NUM_INFERENCE_STEPS),
     seed: int = Form(42),
     cfg_scale_video: float = Form(DEFAULT_VIDEO_CFG_SCALE),
     stg_scale_video: float = Form(DEFAULT_VIDEO_STG_SCALE),
+    modality_scale: float = Form(DEFAULT_MODALITY_SCALE),
+    conditioning_strength: float = Form(DEFAULT_I2V_CONDITIONING_STRENGTH),
     negative_prompt: str = Form(DEFAULT_NEGATIVE_PROMPT),
     enhance_prompt: bool = Form(True),
 ):
@@ -592,7 +602,7 @@ async def async_i2v(
         target=_process_async_i2v, daemon=True,
         args=(task_id, temp_in_path, prompt,
               height, width, num_frames, frame_rate, num_inference_steps, seed,
-              cfg_scale_video, stg_scale_video, negative_prompt, enhance_prompt)
+              cfg_scale_video, stg_scale_video, modality_scale, conditioning_strength, negative_prompt, enhance_prompt)
     )
     t.start()
     return {"task_id": task_id, "status": "processing", "message": "Task queued. Poll GET /v1/video/tasks/{task_id}"}
@@ -674,14 +684,16 @@ def generate_t2v(req: VideoGenerationRequest):
 async def generate_i2v(
     prompt: str = Form(...),
     image: UploadFile = File(...),
-    height: int = Form(512),
-    width: int = Form(768),
+    height: int = Form(704),
+    width: int = Form(1280),
     num_frames: int = Form(121),
     frame_rate: float = Form(DEFAULT_FRAME_RATE),
     num_inference_steps: int = Form(DEFAULT_NUM_INFERENCE_STEPS),
     seed: int = Form(42),
     cfg_scale_video: float = Form(DEFAULT_VIDEO_CFG_SCALE),
     stg_scale_video: float = Form(DEFAULT_VIDEO_STG_SCALE),
+    modality_scale: float = Form(DEFAULT_MODALITY_SCALE),
+    conditioning_strength: float = Form(DEFAULT_I2V_CONDITIONING_STRENGTH),
     negative_prompt: str = Form(DEFAULT_NEGATIVE_PROMPT),
     enhance_prompt: bool = Form(True),
 ):
@@ -704,7 +716,7 @@ async def generate_i2v(
                 cfg_scale_video=cfg_scale_video,
                 stg_scale_video=stg_scale_video,
                 cfg_scale_audio=DEFAULT_AUDIO_CFG_SCALE,
-                modality_scale=DEFAULT_MODALITY_SCALE,
+                modality_scale=modality_scale,
             )
 
             temp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4", prefix="ltx2_out_")
@@ -713,7 +725,8 @@ async def generate_i2v(
             print(f"[LTX-2] Starting I2V Generation (seed={seed}).")
             
             # Format: [(path, frame_index, strength)]
-            image_conditions = [(temp_in_path, 0, 1.0)]
+            condition_strength = max(0.0, min(float(conditioning_strength), 1.0))
+            image_conditions = [(temp_in_path, 0, condition_strength)]
             enhance_prompt = _resolve_enhance_prompt(
                 prompt=prompt,
                 enhance_prompt=enhance_prompt,

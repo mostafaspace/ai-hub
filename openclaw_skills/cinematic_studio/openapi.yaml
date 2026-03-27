@@ -1,0 +1,157 @@
+openapi: 3.1.0
+info:
+  title: AI-Hub Cinematic Studio API
+  version: 1.0.0
+servers:
+  - url: http://192.168.1.26:9000
+paths:
+  /v1/studio/projects/{project_id}/cinematic-productions:
+    post:
+      summary: Unified cinematic router that chooses image-guided or prompt-guided generation server-side based on the request inputs.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [concept]
+              properties:
+                production_type:
+                  type: string
+                title:
+                  type: string
+                concept:
+                  type: string
+                genre:
+                  type: string
+                style_notes:
+                  type: string
+                duration_sec:
+                  type: number
+                scene_count:
+                  type: integer
+                narration_text:
+                  type: string
+                voice:
+                  type: string
+                music_prompt:
+                  type: string
+                source_image_urls:
+                  type: array
+                  items:
+                    type: string
+                use_project_image_assets:
+                  type: boolean
+                use_i2v:
+                  type: boolean
+                output_profile:
+                  type: string
+                shot_plan:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/projects/{project_id}/series-intros:
+    post:
+      summary: Build a cinematic series intro with a saved shot plan, storyboard frames, animated shots, narration, score, and final cut.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, concept]
+              properties:
+                title:
+                  type: string
+                concept:
+                  type: string
+                genre:
+                  type: string
+                style_notes:
+                  type: string
+                duration_sec:
+                  type: number
+                scene_count:
+                  type: integer
+                narration_text:
+                  type: string
+                voice:
+                  type: string
+                music_prompt:
+                  type: string
+                use_i2v:
+                  type: boolean
+                output_profile:
+                  type: string
+                shot_plan:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/projects/{project_id}/immersive-videos:
+    post:
+      summary: Build a long-form immersive cinematic visual package with storyboard frames, animated shots, score, and final render.
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [concept]
+              properties:
+                concept:
+                  type: string
+                style_notes:
+                  type: string
+                duration_sec:
+                  type: number
+                scene_count:
+                  type: integer
+                music_prompt:
+                  type: string
+                use_i2v:
+                  type: boolean
+                output_profile:
+                  type: string
+                shot_plan:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        '200':
+          description: Task accepted.
+  /v1/studio/tasks/{task_id}:
+    get:
+      summary: Poll a cinematic Studio task.
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task status returned.
