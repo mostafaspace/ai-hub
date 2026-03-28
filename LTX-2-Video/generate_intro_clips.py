@@ -8,9 +8,9 @@ URL_BASE = "http://127.0.0.1:8004"
 def submit_task(prompt, task_id_label):
     payload = {
         "prompt": prompt,
-        "num_inference_steps": 50, # Extreme quality
-        "height": 704,
-        "width": 1280,
+        "num_inference_steps": 80, # Ultimate quality
+        "height": 576,
+        "width": 1024,
         "cfg_scale_video": 3.0,
         "num_frames": 121, # 5 seconds
         "seed": 42

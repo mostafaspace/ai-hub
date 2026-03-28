@@ -40,7 +40,8 @@ except Exception as e:
 import ltx_core.model.transformer.model_configurator as mc
 print(f"[LTX-2] DEBUG: Loading model_configurator from: {mc.__file__}")
 
-from ltx_pipelines.ti2vid_two_stages import TI2VidTwoStagesPipeline
+from ltx_pipelines.ti2vid_one_stage import TI2VidOneStagePipeline
+from ltx_pipelines.ti2vid_two_stages import TI2VidTwoStagesPipeline # Keep for reference if needed
 from ltx_core.components.guiders import MultiModalGuiderParams
 from ltx_core.loader import LTXV_LORA_COMFY_RENAMING_MAP, LoraPathStrengthAndSDOps
 from ltx_core.quantization import QuantizationPolicy
@@ -71,7 +72,7 @@ RETRY_WITHOUT_DISTILLED_LORA_ON_OOM = bool(getattr(config, "VIDEO_RETRY_WITHOUT_
 # Quality-biased defaults based on the official LTX-2 guidance and the linked
 # Kaggle notebook: prompt enhancement on, 24 fps, and more stage-1 denoising.
 DEFAULT_FRAME_RATE = 24.0
-DEFAULT_NUM_INFERENCE_STEPS = 35
+DEFAULT_NUM_INFERENCE_STEPS = 75
 DEFAULT_VIDEO_CFG_SCALE = 3.0
 DEFAULT_VIDEO_STG_SCALE = 1.0
 DEFAULT_AUDIO_CFG_SCALE = 7.0
@@ -154,10 +155,9 @@ class ModelManager:
             # To avoid huge footprint, we default FP8 to True in production unless forced otherwise.
             # Expect PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True in the environment
             try:
-                self.pipeline = TI2VidTwoStagesPipeline(
+                self.pipeline = TI2VidOneStagePipeline(
                     checkpoint_path=LTX_MODEL_PATH,
-                    distilled_lora=distilled_lora_config or [],
-                    spatial_upsampler_path=SPATIAL_UPSAMPLER,
+                    device=DEVICE,
                     gemma_root=GEMMA_ROOT,
                     loras=[],
                     quantization=QuantizationPolicy.fp8_cast(),  # uses scale-aware upcast (patched)
@@ -186,8 +186,8 @@ except ImportError as e:
 # For robust JSON handling, Pydantic defaults are set correctly.
 class VideoGenerationRequest(BaseModel):
     prompt: str = Field(..., description="Chronological, literal description of scene")
-    height: int = Field(default=704, description="Base height before upsampling")
-    width: int = Field(default=1280, description="Base width before upsampling")
+    height: int = Field(default=576, description="Base height (1-stage native)")
+    width: int = Field(default=1024, description="Base width (1-stage native)")
     num_frames: int = Field(default=121, description="Number of frames")
     frame_rate: float = Field(default=DEFAULT_FRAME_RATE, description="FPS for the mp4 file")
     num_inference_steps: int = Field(
@@ -574,8 +574,8 @@ def async_t2v(req: VideoGenerationRequest):
 async def async_i2v(
     prompt: str = Form(...),
     image: UploadFile = File(...),
-    height: int = Form(704),
-    width: int = Form(1280),
+    height: int = Form(576),
+    width: int = Form(1024),
     num_frames: int = Form(121),
     frame_rate: float = Form(DEFAULT_FRAME_RATE),
     num_inference_steps: int = Form(DEFAULT_NUM_INFERENCE_STEPS),
@@ -684,8 +684,8 @@ def generate_t2v(req: VideoGenerationRequest):
 async def generate_i2v(
     prompt: str = Form(...),
     image: UploadFile = File(...),
-    height: int = Form(704),
-    width: int = Form(1280),
+    height: int = Form(576),
+    width: int = Form(1024),
     num_frames: int = Form(121),
     frame_rate: float = Form(DEFAULT_FRAME_RATE),
     num_inference_steps: int = Form(DEFAULT_NUM_INFERENCE_STEPS),

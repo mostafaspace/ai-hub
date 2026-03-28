@@ -287,7 +287,7 @@ class TI2VidTwoStagesPipeline:
         # end of generation. 256px tiles are slower but more robust on this box.
         from ltx_core.model.video_vae import SpatialTilingConfig, TemporalTilingConfig, VAE_DECODER_COMFY_KEYS_FILTER
         custom_tiling = TilingConfig(
-            spatial_config=SpatialTilingConfig(tile_size_in_pixels=256, tile_overlap_in_pixels=64),
+            spatial_config=SpatialTilingConfig(tile_size_in_pixels=512, tile_overlap_in_pixels=128),
             temporal_config=TemporalTilingConfig(tile_size_in_frames=64, tile_overlap_in_frames=24)
         )
         from ltx_core.model.audio_vae import AUDIO_VAE_DECODER_COMFY_KEYS_FILTER, VOCODER_COMFY_KEYS_FILTER

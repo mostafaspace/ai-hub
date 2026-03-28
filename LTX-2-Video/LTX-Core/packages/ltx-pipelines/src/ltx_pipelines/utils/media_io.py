@@ -201,7 +201,7 @@ def encode_video(
     print(f"[LTX-2] Opening PyAV container for output at {output_path}...")
     container = av.open(output_path, mode="w")
     print(f"[LTX-2] PyAV container opened.")
-    stream = container.add_stream("libx264", rate=int(fps))
+    stream = container.add_stream("libx264", rate=int(fps), options={"crf": "10", "preset": "slow"})
     stream.width = width
     stream.height = height
     stream.pix_fmt = "yuv420p"

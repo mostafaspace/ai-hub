@@ -86,7 +86,7 @@ class TI2VidOneStagePipeline:
         stepper = EulerDiffusionStep()
         dtype = torch.bfloat16
 
-        text_encoder = self.model_ledger.text_encoder()
+        text_encoder = self.model_ledger.text_encoder(device="cpu")
         if enhance_prompt:
             prompt = generate_enhanced_prompt(
                 text_encoder, prompt, images[0][0] if len(images) > 0 else None, seed=seed
@@ -94,6 +94,12 @@ class TI2VidOneStagePipeline:
         context_p, context_n = encode_text(text_encoder, prompts=[prompt, negative_prompt])
         v_context_p, a_context_p = context_p
         v_context_n, a_context_n = context_n
+
+        # Ensure context embeddings are on the correct device
+        if v_context_p is not None: v_context_p = v_context_p.to(self.device)
+        if a_context_p is not None: a_context_p = a_context_p.to(self.device)
+        if v_context_n is not None: v_context_n = v_context_n.to(self.device)
+        if a_context_n is not None: a_context_n = a_context_n.to(self.device)
 
         torch.cuda.synchronize()
         del text_encoder
@@ -153,7 +159,20 @@ class TI2VidOneStagePipeline:
         del transformer
         cleanup_memory()
 
-        decoded_video = vae_decode_video(video_state.latent, self.model_ledger.video_decoder(), generator=generator)
+        # Use large tiling sizes to reduce mosaic artifacts on the high-res 1280px output.
+        from ltx_core.model.video_vae import SpatialTilingConfig, TemporalTilingConfig, TilingConfig
+        custom_tiling = TilingConfig(
+            spatial_config=SpatialTilingConfig(tile_size_in_pixels=512, tile_overlap_in_pixels=128),
+            temporal_config=TemporalTilingConfig(tile_size_in_frames=64, tile_overlap_in_frames=24)
+        )
+
+        print(f"[LTX-2] Starting VAE decoding (1-stage HD, {custom_tiling.spatial_config.tile_size_in_pixels}px tiling)...")
+        decoded_video = vae_decode_video(
+            video_state.latent,
+            self.model_ledger.video_decoder(),
+            custom_tiling,
+            generator=generator
+        )
         decoded_audio = vae_decode_audio(
             audio_state.latent, self.model_ledger.audio_decoder(), self.model_ledger.vocoder()
         )
