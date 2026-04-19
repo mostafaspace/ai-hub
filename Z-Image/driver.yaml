@@ -1,0 +1,24 @@
+name: vision
+type: image
+entrypoint: "vision_server.py"
+port_config_key: "VISION_PORT"
+color: "\033[92m" # Green
+capabilities:
+  - path: "/v1/images/generations"
+    method: "POST"
+    async: false
+  - path: "/v1/images/async_generate"
+    method: "POST"
+    async: true
+  - path: "/v1/images/async_edit"
+    method: "POST"
+    async: true
+  - path: "/v1/images/tasks"
+    method: "GET"
+    async: false
+  - path: "/v1/images/outputs"
+    method: "GET"
+    async: false
+resource_limits:
+  auto_unload_seconds: 60
+  vram_required_gb: 16

@@ -1,0 +1,15 @@
+name: asr
+type: audio
+entrypoint: "server.py"
+port_config_key: "ASR_PORT"
+color: "\033[93m" # Yellow
+capabilities:
+  - path: "/v1/audio/transcriptions"
+    method: "POST"
+    async: false
+  - path: "/v1/chat/completions"
+    method: "POST"
+    async: false
+resource_limits:
+  auto_unload_seconds: 300
+  vram_required_gb: 12

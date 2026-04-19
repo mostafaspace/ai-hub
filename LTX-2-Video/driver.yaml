@@ -1,0 +1,24 @@
+name: video
+type: video
+entrypoint: "server.py"
+port_config_key: "VIDEO_PORT"
+color: "\033[94m" # Blue
+capabilities:
+  - path: "/v1/video/generations"
+    method: "POST"
+    async: false
+  - path: "/v1/video/async_t2v"
+    method: "POST"
+    async: true
+  - path: "/v1/video/async_i2v"
+    method: "POST"
+    async: true
+  - path: "/v1/video/tasks"
+    method: "GET"
+    async: false
+  - path: "/v1/video/outputs"
+    method: "GET"
+    async: false
+resource_limits:
+  auto_unload_seconds: 60
+  vram_required_gb: 24

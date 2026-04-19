@@ -1,0 +1,15 @@
+name: music
+type: audio
+entrypoint: ["-m", "acestep.api_server"]
+port_config_key: "MUSIC_PORT"
+color: "\033[95m" # Magenta
+capabilities:
+  - path: "/v1/audio/async_generations"
+    method: "POST"
+    async: true
+  - path: "/v1/audio/tasks"
+    method: "GET"
+    async: false
+resource_limits:
+  auto_unload_seconds: 120
+  vram_required_gb: 8

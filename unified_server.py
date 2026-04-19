@@ -17,6 +17,8 @@ import time
 import signal
 import os
 import ctypes
+import yaml
+import glob
 
 # Configuration
 import config
@@ -86,60 +88,58 @@ def kill_port_occupants():
     time.sleep(1)
 
 
-SERVERS = [
-    {
+def discover_drivers():
+    """Discover drivers dynamically via driver.yaml files."""
+    drivers_list = []
+    
+    # Always include the HUB (Orchestrator)
+    drivers_list.append({
         "name": "HUB",
         "cwd": "orchestrator",
         "cmd": python_cmd("server.py"),
-        "color": "\033[97m",  # White
-    },
-    {
-        "name": "TTS",
-        "cwd": "Qwen3-TTS", 
-        "cmd": python_cmd("server.py"), # It will pick up config from within its own code now too
-        "color": "\033[96m",  # Cyan
-    },
-    {
-        "name": "MUSIC",
-        "cwd": "ACE-Step-1.5",
-        "cmd": python_cmd("-m", "acestep.api_server", "--host", config.HOST, "--port", str(config.MUSIC_PORT)),
-        "color": "\033[95m",  # Magenta
-    },
-    {
-        "name": "ASR",
-        "cwd": "Qwen3-ASR",
-        "cmd": python_cmd("server.py"),
-        "color": "\033[93m",  # Yellow
-    },
-    {
-        "name": "VISION",
-        "cwd": "Z-Image",
-        "cmd": python_cmd("vision_server.py"),
-        "color": "\033[92m",  # Green
-    },
-    {
-        "name": "VIDEO",
-        "cwd": "LTX-2-Video",
-        "cmd": python_cmd("server.py"),
-        "color": "\033[94m",  # Blue
-    },
-]
+        "color": "\033[97m", # White
+    })
 
-COMFYUI_MAIN = os.path.join(ROOT_DIR, "ComfyUI", "main.py")
-COMFYUI_CUSTOM_NODE = os.path.join(ROOT_DIR, "ComfyUI", "custom_nodes", "ComfyUI-LTXVideo")
-COMFYUI_VENVS = [
-    os.path.join(ROOT_DIR, "ComfyUI", ".venv312", "Scripts", "python.exe"),
-    os.path.join(ROOT_DIR, "ComfyUI", ".venv", "Scripts", "python.exe"),
-]
-if os.path.exists(COMFYUI_MAIN) and any(os.path.exists(path) for path in COMFYUI_VENVS):
-    SERVERS.append(
-        {
+    # Scan for driver.yaml files in root subdirectories
+    driver_files = glob.glob(os.path.join(ROOT_DIR, "*", "driver.yaml"))
+    for df in driver_files:
+        try:
+            with open(df, "r") as f:
+                data = yaml.safe_load(f)
+                name = data.get("name", "UNKNOWN").upper()
+                cwd = os.path.basename(os.path.dirname(df))
+                entry = data.get("entrypoint")
+                color = data.get("color", "\033[97m")
+                
+                # Transform entrypoint into command list
+                if isinstance(entry, list):
+                    cmd = python_cmd(*entry)
+                else:
+                    cmd = python_cmd(entry)
+                
+                drivers_list.append({
+                    "name": name,
+                    "cwd": cwd,
+                    "cmd": cmd,
+                    "color": color,
+                })
+                print(f"Driver Discovered: {name} in {cwd}")
+        except Exception as e:
+            print(f"Error loading driver {df}: {e}")
+
+    # Legacy fallback for VIDEO_PREMIUM (ComfyUI) if no driver.yaml yet
+    comfy_main = os.path.join(ROOT_DIR, "ComfyUI", "main.py")
+    if os.path.exists(comfy_main) and not any(d["name"] == "VIDEO_PREMIUM" for d in drivers_list):
+        drivers_list.append({
             "name": "VIDEO_PREMIUM",
             "cwd": "ComfyUI",
-            "cmd": comfy_python_cmd("main.py", "--listen", config.HOST, "--port", str(config.COMFYUI_PORT)),
-            "color": "\033[91m",  # Light red
-        }
-    )
+            "cmd": comfy_python_cmd("main.py", "--listen", config.HOST, "--port", str(getattr(config, "COMFYUI_PORT", 8188))),
+            "color": "\033[91m",
+        })
+
+    return drivers_list
+
+SERVERS = discover_drivers()
 
 # Global state
 processes = []

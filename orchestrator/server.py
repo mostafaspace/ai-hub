@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 import uvicorn
 from contextlib import asynccontextmanager
+import glob
 
 # Add root directory to path to import config
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -34,18 +35,45 @@ except ImportError:
     GracefulJSONRoute = None
 
 # --- Load Registry ---
-REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "models.yaml")
+DRIVERS_REGISTRY = {}
 BACKENDS = {}
 
-def load_registry():
-    global BACKENDS
-    try:
-        with open(REGISTRY_PATH, "r") as f:
-            data = yaml.safe_load(f)
-            BACKENDS = data.get("backends", {})
-            print(f"Orchestrator Registry Loaded: {BACKENDS}")
-    except Exception as e:
-        print(f"Failed to load models.yaml: {e}")
+def discover_drivers():
+    global DRIVERS_REGISTRY, BACKENDS
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    drivers = {}
+    backends = {}
+    
+    # Scan for driver.yaml files in root subdirectories
+    driver_files = glob.glob(os.path.join(root_dir, "*", "driver.yaml"))
+    print(f"Scanning for drivers in {root_dir}...")
+    
+    for df in driver_files:
+        try:
+            with open(df, "r") as f:
+                data = yaml.safe_load(f)
+                name = data.get("name")
+                port_key = data.get("port_config_key")
+                port = getattr(config, port_key, None)
+                
+                if not port:
+                    print(f"Warning: Driver '{name}' skipped (No port config for {port_key})")
+                    continue
+                
+                host = getattr(config, "HOST", "127.0.0.1")
+                base_url = f"http://{host}:{port}"
+                data["base_url"] = base_url
+                data["abs_path"] = os.path.dirname(df)
+                
+                drivers[name] = data
+                backends[name] = base_url
+                print(f"Discovered Driver: [{name}] Type: {data.get('type')} at {base_url}")
+        except Exception as e:
+            print(f"Error loading driver {df}: {e}")
+            
+    DRIVERS_REGISTRY = drivers
+    BACKENDS = backends
+    print(f"Discovery complete. {len(DRIVERS_REGISTRY)} drivers active.")
 
 
 # HTTPX Client for connection pooling
@@ -54,7 +82,7 @@ http_client = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global http_client
-    load_registry()
+    discover_drivers()
     async with httpx.AsyncClient(timeout=None) as client:
         http_client = client
         yield
@@ -437,105 +465,59 @@ async def orchestrator_health():
 async def route_models():
     if http_client is None:
         return {"object": "list", "data": [], "unavailable": [{"backend": "all", "error": "Orchestrator client not initialized"}]}
+    
     models = []
     unavailable = []
 
-    for backend_name, backend_url in BACKENDS.items():
+    # Use the discovered drivers to poll for models
+    for name, drv in DRIVERS_REGISTRY.items():
+        backend_url = drv["base_url"]
         try:
             resp = await http_client.get(f"{backend_url}/v1/models")
+            if resp.status_code == 200:
+                payload = resp.json()
+                for item in payload.get("data", []):
+                    if isinstance(item, dict):
+                        enriched_item = dict(item)
+                        enriched_item.setdefault("source_backend", name)
+                        models.append(enriched_item)
+            else:
+                unavailable.append({"backend": name, "status_code": resp.status_code})
         except httpx.RequestError as e:
-            unavailable.append({"backend": backend_name, "error": str(e)})
-            continue
-
-        content_type = resp.headers.get("content-type", "")
-        if resp.status_code == 404 or "application/json" not in content_type.lower():
-            continue
-        if resp.status_code >= 400:
-            unavailable.append({"backend": backend_name, "status_code": resp.status_code})
-            continue
-
-        payload = resp.json()
-        for item in payload.get("data", []):
-            if isinstance(item, dict):
-                enriched_item = dict(item)
-                enriched_item.setdefault("source_backend", backend_name)
-                models.append(enriched_item)
+            unavailable.append({"backend": name, "error": str(e)})
 
     return {
         "object": "list",
         "data": models,
         "unavailable": unavailable,
     }
-# Audio (TTS)
-@app.get("/v1/audio/voices")
-@app.get("/v1/audio/voices/list")
-@app.get("/v1/audio/speakers")
-@app.post("/v1/audio/speech")
-@app.get("/v1/audio/speech")
-@app.post("/v1/audio/speech/stream")
-async def route_tts(request: Request):
-    if "tts" not in BACKENDS:
-        raise HTTPException(status_code=503, detail="TTS Backend not configured in registry.")
-    return await proxy_request(request, BACKENDS["tts"])
+# --- Legacy Handlers (Deprecated in favor of Dynamic Routing) ---
+# Note: These are kept for explicit priority or special logic, but catch_all handles most.
 
-# Audio (Voice Clone/Design specific extensions)
-@app.post("/v1/audio/voice_design")
-@app.post("/v1/audio/voice_clone")
-async def route_tts_extensions(request: Request):
-    if "tts" not in BACKENDS:
-        raise HTTPException(status_code=503, detail="TTS Backend not configured.")
-    return await proxy_request(request, BACKENDS["tts"])
+# @app.post("/v1/audio/speech")
+# async def route_tts(request: Request):
+#     if "tts" not in BACKENDS:
+#         raise HTTPException(status_code=503, detail="TTS Backend not configured.")
+#     return await proxy_request(request, BACKENDS["tts"])
+# --- Driver Task Forwarders ---
+# Some routes like /tasks/{id} need URL rewriting in the JSON response, so we keep specialized handlers for them.
 
-# Audio (ASR)
-@app.post("/v1/audio/transcriptions")
-async def route_asr(request: Request):
-    if "asr" not in BACKENDS:
-        raise HTTPException(status_code=503, detail="ASR Backend not configured.")
-    return await proxy_request(request, BACKENDS["asr"])
-
-# Audio (Music)
-@app.get("/v1/stats")
-@app.post("/v1/audio/async_generations")
-@app.get("/v1/audio")
-async def route_music(request: Request):
-    if "music" not in BACKENDS:
-        raise HTTPException(status_code=503, detail="Music Backend not configured.")
-    return await proxy_request(request, BACKENDS["music"])
 @app.get("/v1/audio/tasks/{task_id}")
-async def route_music_tasks(request: Request, task_id: str):
-    if "music" not in BACKENDS:
-        raise HTTPException(status_code=503, detail="Music Backend not configured.")
-    url = f"{BACKENDS['music']}{request.url.path}"
-    if request.url.query:
-        url += f"?{request.url.query}"
-    headers = dict(request.headers)
-    headers.pop("host", None)
-    try:
-        resp = await http_client.get(url, headers=headers)
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Bad Gateway: Error communicating with backend model service: {e}")
-    filtered_headers = {
-        k: v for k, v in resp.headers.items()
-        if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")
-    }
-    content_type = resp.headers.get("content-type", "")
-    if "application/json" not in content_type.lower():
-        return Response(content=resp.content, status_code=resp.status_code, headers=filtered_headers)
-    data = resp.json()
-    if data.get("status") == "completed":
-        for item in data.get("data", []):
-            if isinstance(item, dict) and item.get("url"):
-                item["url"] = _rewrite_backend_url_to_hub(item["url"], "music")
-    return JSONResponse(status_code=resp.status_code, content=data, headers=filtered_headers)
-# Vision (Images)
-@app.post("/v1/images/generations")
-@app.post("/v1/images/async_generate")
-@app.post("/v1/images/async_edit")
-async def route_vision(request: Request):
-    if "vision" not in BACKENDS:
-        raise HTTPException(status_code=503, detail="Vision Backend not configured.")
-    return await proxy_request(request, BACKENDS["vision"])
-
+async def route_audio_tasks(request: Request, task_id: str):
+    # Find which audio driver might have this task (Music uses this)
+    if "music" in BACKENDS:
+        url = f"{BACKENDS['music']}{request.url.path}"
+        try:
+            resp = await http_client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("status") == "completed":
+                    for item in data.get("data", []):
+                        if isinstance(item, dict) and item.get("url"):
+                            item["url"] = _rewrite_backend_url_to_hub(item["url"], "music")
+                return data
+        except: pass
+    raise HTTPException(status_code=404, detail="Task not found in audio backends")
 
 @app.get("/v1/images/tasks/{task_id}")
 async def route_vision_tasks(task_id: str):
@@ -543,35 +525,13 @@ async def route_vision_tasks(task_id: str):
         raise HTTPException(status_code=503, detail="Vision Backend not configured.")
     try:
         resp = await http_client.get(f"{BACKENDS['vision']}/v1/images/tasks/{task_id}")
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Bad Gateway: Error communicating with backend model service: {e}")
-    filtered_headers = {
-        k: v for k, v in resp.headers.items()
-        if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")
-    }
-    content_type = resp.headers.get("content-type", "")
-    if "application/json" not in content_type.lower():
-        return Response(content=resp.content, status_code=resp.status_code, headers=filtered_headers)
-    data = resp.json()
-    for item in data.get("data", []):
-        if isinstance(item, dict) and item.get("url"):
-            item["url"] = _rewrite_backend_output_url(item["url"], "vision", "/v1/images/outputs")
-    return JSONResponse(status_code=resp.status_code, content=data, headers=filtered_headers)
-
-
-@app.get("/v1/images/outputs/{filename:path}")
-async def route_vision_output(request: Request, filename: str):
-    return await _proxy_backend_output(request, "vision", filename)
-
-# Video
-@app.post("/v1/video/generations")
-@app.post("/v1/video/async_t2v")
-@app.post("/v1/video/async_i2v")
-async def route_video(request: Request):
-    if "video" not in BACKENDS:
-        raise HTTPException(status_code=503, detail="Video Backend not configured.")
-    return await proxy_request(request, BACKENDS["video"])
-
+        data = resp.json()
+        for item in data.get("data", []):
+            if isinstance(item, dict) and item.get("url"):
+                item["url"] = _rewrite_backend_output_url(item["url"], "vision", "/v1/images/outputs")
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Bad Gateway: {e}")
 
 @app.get("/v1/video/tasks/{task_id}")
 async def route_video_tasks(task_id: str):
@@ -579,19 +539,12 @@ async def route_video_tasks(task_id: str):
         raise HTTPException(status_code=503, detail="Video Backend not configured.")
     try:
         resp = await http_client.get(f"{BACKENDS['video']}/v1/video/tasks/{task_id}")
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Bad Gateway: Error communicating with backend model service: {e}")
-    filtered_headers = {
-        k: v for k, v in resp.headers.items()
-        if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")
-    }
-    content_type = resp.headers.get("content-type", "")
-    if "application/json" not in content_type.lower():
-        return Response(content=resp.content, status_code=resp.status_code, headers=filtered_headers)
-    data = resp.json()
-    if isinstance(data, dict) and data.get("url"):
-        data["url"] = _rewrite_backend_output_url(data["url"], "video", "/v1/video/outputs")
-    return JSONResponse(status_code=resp.status_code, content=data, headers=filtered_headers)
+        data = resp.json()
+        if isinstance(data, dict) and data.get("url"):
+            data["url"] = _rewrite_backend_output_url(data["url"], "video", "/v1/video/outputs")
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Bad Gateway: {e}")
 
 
 @app.get("/v1/video/outputs/{filename:path}")
@@ -601,12 +554,11 @@ async def route_video_output(request: Request, filename: str):
 # Chat Completions (Multiplexing)
 # The Chat Completions endpoint is tricky because multiple backends might use it (ASR uses it for Qwen audio chat, potentially future text LLMs).
 # For now, default route it to ASR as it's the primary provider of chat completions currently in the hub.
-@app.post("/v1/chat/completions")
-async def route_chat(request: Request):
-    # Could dynamically inspect request JSON here later to route based on "model" parameter.
-    if "asr" not in BACKENDS:
-        raise HTTPException(status_code=503, detail="ASR Backend not configured.")
-    return await proxy_request(request, BACKENDS["asr"])
+# @app.post("/v1/chat/completions")
+# async def route_chat(request: Request):
+#     if "asr" not in BACKENDS:
+#         raise HTTPException(status_code=503, detail="ASR Backend not configured.")
+#     return await proxy_request(request, BACKENDS["asr"])
 
 # --- DASHBOARD API ENDPOINTS ---
 
@@ -769,17 +721,40 @@ async def hub_launch_all():
         return {"message": f"Failed to launch: {str(e)}"}
 
 
-# Generic pass-through for anything else
+# Generic catch-all with dynamic driver capability routing
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def catch_all(request: Request, path: str):
+    full_path = f"/{path}"
+    
     # Root: redirect to dashboard
     if path == "" or path == "/":
         return RedirectResponse(url="/dashboard/", status_code=302)
 
     if path == "health":
-        return {"status": "ok", "message": "AI-Hub Orchestrator is running.", "registry": BACKENDS}
+        return {"status": "ok", "message": "AI-Hub Orchestrator is running.", "drivers": list(DRIVERS_REGISTRY.keys())}
 
-    raise HTTPException(status_code=404, detail=f"Orchestrator route not defined for path: {path}")
+    # Discover target via capabilities
+    target_backend_url = None
+    for name, drv in DRIVERS_REGISTRY.items():
+        for cap in drv.get("capabilities", []):
+            if cap.get("path") == full_path and cap.get("method") == request.method:
+                target_backend_url = drv["base_url"]
+                break
+        if target_backend_url:
+            break
+            
+    if target_backend_url:
+        return await proxy_request(request, target_backend_url)
+
+    # Fallback for static output serving from visions/videos
+    if full_path.startswith("/v1/images/outputs/"):
+        filename = path[len("v1/images/outputs/"):].lstrip("/")
+        return await _proxy_backend_output(request, "vision", filename)
+    if full_path.startswith("/v1/video/outputs/"):
+        filename = path[len("v1/video/outputs/"):].lstrip("/")
+        return await _proxy_backend_output(request, "video", filename)
+
+    raise HTTPException(status_code=404, detail=f"No capability matches route {request.method} {full_path}")
 
 if __name__ == "__main__":
     port = getattr(config, "ORCHESTRATOR_PORT", 9000)

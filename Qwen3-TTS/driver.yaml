@@ -1,0 +1,24 @@
+name: tts
+type: audio
+entrypoint: "server.py"
+port_config_key: "TTS_PORT"
+color: "\033[96m" # Cyan
+capabilities:
+  - path: "/v1/audio/speech"
+    method: "POST"
+    async: false
+  - path: "/v1/audio/voices"
+    method: "GET"
+    async: false
+  - path: "/v1/audio/voice_design"
+    method: "POST"
+    async: false
+  - path: "/v1/audio/voice_clone"
+    method: "POST"
+    async: false
+  - path: "/v1/audio/speech/stream"
+    method: "POST"
+    async: false
+resource_limits:
+  auto_unload_seconds: 60
+  vram_required_gb: 4
